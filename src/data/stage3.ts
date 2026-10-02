@@ -110,10 +110,11 @@ export const stage3: StageDef = {
     b.put(P.signPost('관람차\n(가운데에 보물!)', 2.4, 1.1), WX + 14, 0, -1.2);
 
     // ------------------------------------------------------------ carnival tent with a gear
-    b.slab(26, 3, 0.4, 6, 'fabric', { depth: 4 });
+    // left wall stops above the door flap so breaking the flap really opens a way in (R-05)
+    b.slab(26, 4.5, 0.4, 3.0, 'fabric', { depth: 4 });
     b.slab(38, 3, 0.4, 6, 'fabric', { depth: 4 });
     b.ground([{ x: 25, y: 6 }, { x: 39, y: 6 }, { x: 32, y: 11 }], { fill: 'feltpink', top: null, depth: 5 });
-    b.block(26, 1.2, 0.5, 2.4, 'fabric', { static: true, hp: 6, breakable: true });
+    b.block(26, 1.5, 0.5, 3.0, 'fabric', { static: true, hp: 6, breakable: true, name: 'tentFlap' });
     b.spring(32, 11.3, 3, 0, 22);
     b.gear('s3_tent', 32, 1.6);
     b.coinLine(28.5, 1.4, 35.5, 1.4, 4);

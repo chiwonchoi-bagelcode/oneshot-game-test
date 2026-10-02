@@ -9,6 +9,11 @@ import { audio } from '../core/audio';
 
 const Vec2 = planck.Vec2;
 
+export interface DamageInfo {
+  mat?: string;
+  speed?: number;
+}
+
 export interface ControlInput {
   active: boolean;
   /** desired thrust (acceleration) direction in world space */
@@ -41,7 +46,9 @@ export class Rocket implements RocketLike {
   glide = 0;
   rollAngle = 0;
   outOfFuelWarned = false;
-  onDamage?: (amount: number, kind: string) => void;
+  onDamage?: (amount: number, kind: string, info?: DamageInfo) => void;
+  /** what last hurt us (for the failure explanation) */
+  lastHit: { kind: string; mat?: string; speed?: number; amount: number; t: number } | null = null;
   onDeath?: () => void;
   onEmpty?: () => void;
   private flameCone: THREE.Mesh;
@@ -119,14 +126,15 @@ export class Rocket implements RocketLike {
     return { x: p.x + f.x * ny, y: p.y + f.y * ny, dx: -f.x, dy: -f.y };
   }
 
-  damage(amount: number, x: number, y: number, kind: string) {
+  damage(amount: number, x: number, y: number, kind: string, info?: DamageInfo) {
     if (this.dead) return;
     if (this.invuln > 0) return;
     if (amount <= 0) return;
     this.hull -= amount;
     this.hurtFlash = Math.min(1, this.hurtFlash + amount / 25);
     this.lastDamageT = this.world.time;
-    this.onDamage?.(amount, kind);
+    this.lastHit = { kind, mat: info?.mat, speed: info?.speed, amount, t: this.world.time };
+    this.onDamage?.(amount, kind, info);
     if (amount > 4) audio.hurt();
     if (this.hull <= 0) this.explode();
   }

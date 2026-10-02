@@ -234,3 +234,24 @@ export function styleLabel(s: RocketStats) {
   if (s.dryMass <= 1.9 && s.turn >= 4) return { name: '회피형', color: '#3a9bd8' };
   return { name: '균형형', color: '#6bb34a' };
 }
+
+/**
+ * Can this build leave the seesaw and climb? (C-196: illegal builds are explained, never silent).
+ * twr < 1 cannot hover even on a full burn; < 1.15 flies but barely climbs.
+ */
+export function flightCheck(s: RocketStats): { ok: boolean; reason: string; fix: string; warn?: string } {
+  if (s.twr < 1)
+    return {
+      ok: false,
+      reason: `너무 무거워요! 추력 ${s.thrust.toFixed(0)} < 무게 ${(s.fullMass * GRAVITY).toFixed(0)} — 엔진이 로켓을 들어 올리지 못해요.`,
+      fix: '더 센 엔진(소화기)을 달거나, 몸통·탱크를 가벼운 것으로 바꿔요.',
+    };
+  if (s.twr < 1.15)
+    return {
+      ok: true,
+      reason: '',
+      fix: '가벼운 부품으로 바꾸면 훨씬 잘 올라가요.',
+      warn: `간신히 뜨는 무게예요 (추력/무게 ${s.twr.toFixed(2)}). 높은 곳은 힘들 거예요.`,
+    };
+  return { ok: true, reason: '', fix: '' };
+}

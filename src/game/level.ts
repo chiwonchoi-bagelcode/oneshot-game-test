@@ -6,6 +6,7 @@ import * as P from '../render/models/props';
 import { SkyColors } from '../render/renderer';
 import { mulberry32, rand } from '../core/math';
 import { audio } from '../core/audio';
+import { save } from '../core/save';
 
 export interface MethodDef {
   id: Cause;
@@ -26,6 +27,11 @@ export interface StageDef {
   fog: [string, number, number];
   bounds: { minX: number; maxX: number; minY: number; maxY: number };
   reward: number;
+  /**
+   * Optional private interior around the target (birthday room etc.). After the target is wrecked
+   * the escape bonus requires leaving this box; otherwise flying far enough from the target counts.
+   */
+  escapeZone?: { minX: number; maxX: number; minY: number; maxY: number; name: string };
   build(b: LevelBuilder): void;
 }
 
@@ -236,10 +242,10 @@ export class LevelBuilder {
         const fx = this.w.fx;
         const bx = p.x + rand(-4, 4);
         const by = p.y + rand(3, 8);
-        setTimeout(() => {
+        this.w.after(0.12 + i * 0.14, () => {
           fx.sparkBurst(bx, by, 26, [0xff4d6d, 0x4dd2ff, 0xffd23f, 0x7dff6a][i], 12);
           fx.flash(bx, by, 0.5, [0xff4d6d, 0x4dd2ff, 0xffd23f, 0x7dff6a][i]);
-        }, 120 + i * 140);
+        });
       }
     };
     this.trackPos(e);
@@ -380,7 +386,7 @@ export class LevelBuilder {
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) this.w.addCoin(x + (c - (cols - 1) / 2) * sp, y + r * sp);
   }
   gear(id: string, x: number, y: number) {
-    return this.w.addGear(id, x, y);
+    return this.w.addGear(id, x, y, !!save.gearsFound[id]);
   }
   fuel(x: number, y: number, amount = 35) {
     return this.w.addFuel(x, y, amount);

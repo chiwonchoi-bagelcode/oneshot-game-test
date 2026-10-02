@@ -2,27 +2,45 @@ import * as THREE from 'three';
 import * as planck from 'planck';
 import { Cause, Ent, GameWorld, WorldEvents } from './world';
 import { LevelBuilder, StageDef } from './level';
-import { Rocket, ControlInput } from './rocket';
+import { Rocket, ControlInput, DamageInfo } from './rocket';
 import { Effects } from '../render/effects';
 import { createLights, createSky, Renderer } from '../render/renderer';
-import { Kid } from '../render/models/kid';
+import { Kid, Face } from '../render/models/kid';
 import * as P from '../render/models/props';
 import { FlightInput } from '../core/input';
 import { audio } from '../core/audio';
 import { Loadout } from '../data/parts';
-import { clamp, damp, easeInOutCubic, easeOutCubic, len, lerp, rand } from '../core/math';
+import { clamp, damp, easeInOutCubic, len, lerp, rand } from '../core/math';
 import { save, persist, stageProg } from '../core/save';
+import { track } from '../core/telemetry';
+import { disposeTree } from '../render/geom';
 import type { UI } from '../ui/ui';
 
 const Vec2 = planck.Vec2;
 const FIXED = 1 / 60;
 
+/** Launch timing contract (R-02): the ring turns green exactly where a press becomes "perfect". */
+export const JUMP = { crouch: 0.32, air: 1.05, ringFrom: 0.35, perfectFrom: 0.75 };
+/** Ending contract (docs/spec-core.md §종료). */
+export const END = { failGrace: 1.0, failHold: 2.4, escapeTime: 7, escapeDist: 16, successHoldNoRocket: 3.0, settleAfterEscape: 1.2 };
+
 /** Names for causes a stage doesn't list as an official method (e.g. a kamikaze explosion). */
-const GENERIC_METHOD: Record<string, string> = {
+export const GENERIC_METHOD: Record<string, string> = {
   ram: '💥 정면 돌파', topple: '🪵 무너뜨리기', boom: '💣 자폭 돌격', water: '💦 물바다', fire: '🔥 불장난', device: '⚙️ 장치 활용', precision: '🎯 정밀 저격',
 };
 
-type Phase = 'intro' | 'ready' | 'jump' | 'boost' | 'fly' | 'success' | 'fail' | 'done';
+const MAT_NAME: Record<string, string> = {
+  wood: '나무', darkwood: '나무', cardboard: '골판지', glass: '유리', brick: '벽돌', metal: '쇠', redmetal: '쇠', stone: '돌', concrete: '콘크리트',
+  ceramic: '도자기', rubber: '고무', soft: '케이크', fabric: '천', grass: '땅', soil: '땅', darksoil: '땅', roof: '지붕', bluetile: '지붕', plaster: '벽',
+  schoolwall: '벽', cloud: '구름', feltblue: '펠트', feltpink: '펠트', feltpurple: '펠트',
+};
+
+/**
+ * intro → ready → jump → boost → fly ─┬─ target wrecked ─→ escape (bonus play) ─→ done
+ *                                     └─ fail candidate (grace) ─→ fail confirmed ─→ done
+ * `done` = settled: physics stopped, economy locked, only result actions remain.
+ */
+export type Phase = 'intro' | 'ready' | 'jump' | 'boost' | 'fly' | 'escape' | 'fail' | 'done';
 
 export interface RunResult {
   success: boolean;
@@ -34,12 +52,17 @@ export interface RunResult {
   mischief: number;
   reward: number;
   perfect: number;
+  escapeBonus: number;
+  escaped: boolean;
   total: number;
   gears: string[];
+  gearsAgain: number;
   broken: number;
   maxAlt: number;
   reason: string;
+  tip: string;
   firstClear: boolean;
+  paid: boolean;
 }
 
 export class Flight {
@@ -52,8 +75,8 @@ export class Flight {
   fx = new Effects();
   phase: Phase = 'intro';
   phaseT = 0;
+  attempt: number;
   private acc = 0;
-  private timeScale = 1;
   private hitStop = 0;
   private slowmo = 0;
   private shake = 0;
@@ -63,24 +86,36 @@ export class Flight {
   private seesaw = P.seesaw();
   private boardAng = 0.344;
   private boardTarget = 0.344;
-  private perfect = false;
-  private tappedEarly = false;
+  perfect = false;
+  tappedEarly = false;
   private launchX = 0;
   private launchY = 0;
-  private runCoins = 0;
-  private mischief = 0;
-  private gearsGot: string[] = [];
+  runCoins = 0;
+  mischief = 0;
+  gearsGot: string[] = [];
+  gearsAgain = 0;
   private maxAlt = 0;
   private settleT = 0;
   private emptyT = 0;
   private endReason = '';
-  private result: RunResult | null = null;
-  private targetCause: Cause | null = null;
+  private endTip = '';
+  result: RunResult | null = null;
+  targetCause: Cause | null = null;
   private targetPos = { x: 0, y: 0 };
   private elapsed = 0;
   private boundsWarnT = 0;
   private controlHinted = false;
   private kidMood = 0;
+  private failConfirmed = false;
+  private escaped = false;
+  private escapeEndT = -1;
+  private pendingTarget: { e: Ent; cause: Cause } | null = null;
+  private pendingDeath = false;
+  // onboarding coach (stage 1 first flights)
+  private coachStep: string | null = null;
+  private thrustT = 0;
+  private coastT = 0;
+  private brakeT = 0;
   // HUD portrait: a second little kid rendered live in a corner viewport
   private pScene = new THREE.Scene();
   private pCam = new THREE.PerspectiveCamera(26, 1, 0.1, 10);
@@ -93,8 +128,8 @@ export class Flight {
   private saidNear = false;
   private coinStreak = 0;
   private coinStreakT = 0;
-  private lastHullPct = 1;
   private introFrom = { x: 0, y: 0 };
+  private hits = { count: 0, big: 0 };
 
   constructor(public renderer: Renderer, public stage: StageDef, public loadout: Loadout, public input: FlightInput, public ui: UI, skipIntro = false) {
     const sc = this.scene;
@@ -110,7 +145,10 @@ export class Flight {
     sc.add(levelGroup);
     const events: WorldEvents = {
       onBreak: (e, c) => this.onBreak(e, c),
-      onTarget: (e, c) => this.onTarget(e, c),
+      onTarget: (e, c) => {
+        // decided after the physics step together with any rocket death (C-170)
+        if (!this.pendingTarget) this.pendingTarget = { e, cause: c };
+      },
       onCoin: (v, x, y) => {
         this.runCoins += v;
         this.coinStreak++;
@@ -118,18 +156,26 @@ export class Flight {
         if (this.coinStreak === 5) this.say('짤랑짤랑~ 부자다!', 'grin');
         this.ui.popWorld(this.toScreen(x, y), `+${v}`, 'coin');
       },
-      onGear: (id, x, y) => this.onGear(id, x, y),
+      onGear: (id, x, y, owned) => this.onGear(id, x, y, owned),
       onFuel: (a, x, y) => {
         this.rocket.fuel = Math.min(this.rocket.stats.fuel, this.rocket.fuel + a);
         this.rocket.outOfFuelWarned = false;
+        // R-03: a refuel gives a brand new chance — empty/settle timers restart
+        this.emptyT = 0;
+        this.settleT = 0;
+        this.warnedFuel = false;
         this.ui.popWorld(this.toScreen(x, y), '연료 충전!', 'fuel');
       },
       onText: (x, y, t, s) => this.ui.popWorld(this.toScreen(x, y), t, s ?? 'pop'),
-      onShake: (a) => (this.shake = Math.min(1.2, this.shake + a)),
-      onHitStop: (s) => (this.hitStop = Math.max(this.hitStop, s)),
+      onShake: (a) => this.addShake(a),
+      onHitStop: (s) => {
+        if (!save.settings.reduceMotion) this.hitStop = Math.max(this.hitStop, s);
+      },
       onRocketHit: (p) => {
-        this.ui.flashHurt(p);
-        if (navigator.vibrate) navigator.vibrate(Math.round(20 + p * 50));
+        this.hits.count++;
+        if (p > 0.5) this.hits.big++;
+        if (save.settings.flash) this.ui.flashHurt(p);
+        if (save.settings.vibration && navigator.vibrate) navigator.vibrate(Math.round(20 + p * 50));
       },
     };
     this.world = new GameWorld(levelGroup, this.fx, events);
@@ -158,8 +204,7 @@ export class Flight {
     this.kid.hips.rotation.y = -0.9;
     sc.add(this.kid.root);
 
-    // --- HUD portrait scene
-    // a disc backdrop (instead of a square background) keeps the portrait round
+    // --- HUD portrait scene; a disc backdrop keeps the portrait round
     const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshBasicMaterial({ color: '#ffe3a8', toneMapped: false }));
     this.pScene.add(disc);
     this.pScene.add(new THREE.HemisphereLight(0xffffff, 0x8a6a50, 1.6));
@@ -184,13 +229,20 @@ export class Flight {
     // --- rocket on the board
     this.rocket = new Rocket(this.world, loadout, L.x - 2, L.y + 3, 0);
     this.rocket.body.setActive(false);
-    this.rocket.onDamage = (a, k) => this.onRocketDamage(a, k);
-    this.rocket.onDeath = () => this.onRocketDeath();
+    this.rocket.onDamage = (a, k, info) => this.onRocketDamage(a, k, info);
+    this.rocket.onDeath = () => (this.pendingDeath = true);
     this.rocket.onEmpty = () => {
-      this.ui.banner('연료 바닥!', '관성으로 날아가자…', 'warn');
+      this.ui.banner('연료 바닥!', '관성으로 날아가자… 연료통을 주우면 다시 살아나요', 'warn');
       this.say('어어어…?!', 'worried', true);
     };
     this.placeRocketOnBoard();
+
+    // --- attempt bookkeeping (idempotent settlement)
+    save.attempts++;
+    this.attempt = save.attempts;
+    save.lastStage = stage.id;
+    persist();
+    track('flight_start', { attempt: this.attempt, level: stage.id, body: loadout.body, engine: loadout.engine, tank: loadout.tank, nose: loadout.nose, fins: loadout.fins, retry: skipIntro });
 
     this.ui.showHud(true);
     this.ui.setHud({ fuel: 1, hull: 1, coins: 0, gears: 0, alt: 0 });
@@ -213,6 +265,11 @@ export class Flight {
     this.updateCamera(0, true);
   }
 
+  /** Pause is a gameplay tool only: never over a confirmed ending or the results (R-01). */
+  canPause() {
+    return this.phase === 'intro' || this.phase === 'ready' || this.phase === 'jump' || this.phase === 'boost' || this.phase === 'fly' || this.phase === 'escape';
+  }
+
   private setPhase(p: Phase) {
     this.phase = p;
     this.phaseT = 0;
@@ -224,6 +281,11 @@ export class Flight {
       save.seenIntro[this.stage.id] = true;
       persist();
     }
+  }
+
+  private addShake(a: number) {
+    const m = save.settings.reduceMotion ? 0 : save.settings.shake === 'off' ? 0 : save.settings.shake === 'reduced' ? 0.4 : 1;
+    this.shake = Math.min(1.2, this.shake + a * m);
   }
 
   private placeRocketOnBoard() {
@@ -247,7 +309,7 @@ export class Flight {
   // ================================================================== events
   private onBreak(e: Ent, cause: Cause) {
     if (e.kind === 'debris' || e.kind === 'water') return;
-    this.mischief += e.isTarget ? 0 : Math.max(2, Math.round(e.maxHp / 10));
+    if (this.world.ledgerOpen) this.mischief += e.isTarget ? 0 : Math.max(2, Math.round(e.maxHp / 10));
     const p = e.obj ? e.obj.position : new THREE.Vector3();
     const s = this.toScreen(p.x, p.y);
     const words: Record<string, string[]> = {
@@ -263,34 +325,19 @@ export class Flight {
       const w = words[e.mat] ?? ['쾅!'];
       this.ui.popWorld(s, w[Math.floor(Math.random() * w.length)], 'smash');
     }
-    void cause;
   }
 
-  private onTarget(e: Ent, cause: Cause) {
-    if (this.phase === 'done') return;
-    // a kamikaze finish still counts if it happens right as the rocket dies
-    if (this.phase === 'fail' && this.phaseT > 1.2) return;
-    this.targetCause = cause;
-    const p = e.obj?.position ?? new THREE.Vector3(this.targetPos.x, this.targetPos.y, 0);
-    this.targetPos = { x: p.x, y: p.y };
-    this.fx.confettiBurst(p.x, p.y, 160, 16);
-    this.fx.celebrate(p.x, p.y);
-    audio.fanfare();
-    this.slowmo = 1.6;
-    this.shake = 1;
-    const m = this.stage.methods.find((mm) => mm.id === cause);
-    this.ui.banner('장난 대성공!', m ? `${m.icon} ${m.name}` : GENERIC_METHOD[cause] ?? '', 'win');
-    this.kid.play('cheer');
-    this.kid.setFace('grin');
-    this.pKid.play('cheer');
-    this.say('해냈다아아!!', 'grin', true);
-    this.setPhase('success');
-  }
-
-  private onGear(id: string, x: number, y: number) {
+  private onGear(id: string, x: number, y: number, owned: boolean) {
+    if (owned) {
+      // R-09: already collected in an earlier run — no new currency, no "found" fanfare
+      this.gearsAgain++;
+      this.ui.popWorld(this.toScreen(x, y), '이미 찾은 톱니', 'warn');
+      return;
+    }
     if (!save.gearsFound[id]) {
       save.gearsFound[id] = true;
       persist();
+      track('currency_source', { currency: 'gear', amount: 1, reason: 'collect', id, attempt: this.attempt });
     }
     this.gearsGot.push(id);
     this.ui.banner('톱니바퀴 발견!', '차고에서 새 부품을 연구할 수 있어요', 'gear');
@@ -298,7 +345,8 @@ export class Flight {
     this.ui.popWorld(this.toScreen(x, y), '⚙️', 'gear');
   }
 
-  private onRocketDamage(a: number, kind: string) {
+  private onRocketDamage(a: number, kind: string, info?: DamageInfo) {
+    void info;
     if (a > 6) {
       this.kid.setFace('o');
       this.kidMood = 1.2;
@@ -307,11 +355,46 @@ export class Flight {
     }
   }
 
-  private onRocketDeath() {
-    if (this.phase === 'success' || this.phase === 'done') return;
-    this.endReason = '로켓 대파!';
-    this.ui.banner('로켓 대파!', '다른 길이나 부품을 시험해보자', 'lose');
-    this.say('내 로켓이…!', 'worried', true);
+  // ================================================================== ending rules (one decision per physics step)
+  private resolveEnd() {
+    const tgt = this.pendingTarget;
+    const died = this.pendingDeath;
+    this.pendingTarget = null;
+    this.pendingDeath = false;
+    // target wrecked (also wins a same-step tie with the rocket blowing up — C-170)
+    if (tgt && (this.phase === 'boost' || this.phase === 'fly' || (this.phase === 'fail' && !this.failConfirmed))) {
+      this.confirmSuccess(tgt.e, tgt.cause);
+      return;
+    }
+    if (died) {
+      if (this.phase === 'escape') {
+        // rocket lost during the escape: success stands, no escape bonus
+        this.escapeEndT = this.phaseT;
+        this.ui.banner('탈출 실패…', '그래도 장난은 성공!', 'warn');
+        return;
+      }
+      if (this.phase === 'boost' || this.phase === 'fly') {
+        this.failCandidate(this.describeDeath(), '로켓 대파!');
+      }
+    }
+  }
+
+  private describeDeath(): [string, string] {
+    const h = this.rocket.lastHit;
+    if (!h) return ['로켓이 부서졌어요', '천천히 접근하거나 튼튼한 부품을 써보자.'];
+    if (h.kind === 'boom') return ['폭발에 휘말려 대파', '폭발물은 멀리서 터뜨리거나, 터지기 전에 빠져나오자.'];
+    if (h.kind === 'fire') return ['불길 속에 너무 오래 있었어요', '불붙은 물건 근처에서 오래 머무르지 말자.'];
+    const mat = MAT_NAME[h.mat ?? ''] ?? '단단한 것';
+    const sp = h.speed ? `${Math.round(h.speed)}m/s로 ` : '';
+    return [`${mat}에 ${sp}부딪혀 대파`, '날아가는 반대쪽으로 분사해 감속하거나, 냄비 투구·튼튼한 동체를 써보자.'];
+  }
+
+  private failCandidate(reason: [string, string], banner: string) {
+    this.endReason = reason[0];
+    this.endTip = reason[1];
+    this.failConfirmed = false;
+    this.ui.banner(banner, reason[0], 'lose');
+    this.say(banner === '로켓 대파!' ? '내 로켓이…!' : '어라라…', 'worried', true);
     this.pKid.play('sad');
     this.kid.play('sad');
     this.kid.setFace('worried');
@@ -319,38 +402,58 @@ export class Flight {
     this.setPhase('fail');
   }
 
+  private confirmSuccess(e: Ent, cause: Cause) {
+    this.targetCause = cause;
+    const p = e.obj?.position ?? new THREE.Vector3(this.targetPos.x, this.targetPos.y, 0);
+    this.targetPos = { x: p.x, y: p.y };
+    this.fx.confettiBurst(p.x, p.y, 160, 16);
+    this.fx.celebrate(p.x, p.y);
+    audio.fanfare();
+    if (!save.settings.reduceMotion) this.slowmo = 1.4;
+    this.addShake(1);
+    const m = this.stage.methods.find((mm) => mm.id === cause);
+    const alive = !this.rocket.dead;
+    this.ui.banner('장난 대성공!', (m ? `${m.icon} ${m.name}` : GENERIC_METHOD[cause] ?? '') + (alive ? ' — 이제 유유히 빠져나가자!' : ''), 'win');
+    this.kid.play('cheer');
+    this.kid.setFace('grin');
+    this.pKid.play('cheer');
+    this.say(alive ? '해냈다! 튀자~!' : '해냈다아아!!', 'grin', true);
+    this.ui.coach(null);
+    this.escapeEndT = alive ? -1 : 0;
+    this.setPhase('escape');
+  }
+
   // ================================================================== update
   update(rawDt: number) {
     const inp = this.input;
     this.elapsed += rawDt;
-    // pause/time-scale
     let scale = 1;
     if (this.hitStop > 0) {
       this.hitStop -= rawDt;
       scale = 0.06;
     } else if (this.slowmo > 0) {
       this.slowmo -= rawDt;
-      scale = this.slowmo > 0.6 ? 0.25 : lerp(1, 0.25, this.slowmo / 0.6);
+      scale = this.slowmo > 0.6 ? 0.3 : lerp(1, 0.3, this.slowmo / 0.6);
     }
-    this.timeScale = scale;
     const dt = rawDt * scale;
     this.phaseT += rawDt;
 
     switch (this.phase) {
       case 'intro':
-        this.updateIntro(rawDt);
+        this.updateIntro();
         break;
       case 'ready':
-        if (inp.pressed || inp.tapped || inp.isKey('Space')) this.startJump();
+        if (inp.actionPressed()) this.startJump();
         break;
       case 'jump':
-        this.updateJump(rawDt);
+        this.updateJump();
         break;
     }
 
-    // ---- control input
+    // ---- control input (also during the escape — the player keeps the rocket)
     const ctrl: ControlInput = { active: false, dx: 0, dy: 1, throttle: 0 };
-    if (this.phase === 'boost' || this.phase === 'fly' || this.phase === 'success') {
+    const controllable = this.phase === 'boost' || this.phase === 'fly' || this.phase === 'escape';
+    if (controllable) {
       if (inp.active && inp.throttle > 0) {
         ctrl.active = true;
         ctrl.dx = -inp.jetX;
@@ -368,37 +471,41 @@ export class Flight {
       if (!this.controlHinted) {
         this.controlHinted = true;
         this.ui.banner('조종 시작!', '끌어당긴 방향으로 연료 분사 → 반대로 가속', 'info');
-        setTimeout(() => this.say('내 실력을 보여주지!', 'determined'), 1500);
+        this.world.after(1.5, () => this.say('내 실력을 보여주지!', 'determined'));
       }
     }
 
-    // ---- fixed physics
-    const active = this.phase === 'boost' || this.phase === 'fly' || this.phase === 'success' || this.phase === 'fail';
-    // the world always simulates (balloons bob, stacks settle); the rocket only once launched
-    this.acc += dt;
-    let steps = 0;
-    while (this.acc >= FIXED && steps < 5) {
-      this.acc -= FIXED;
-      steps++;
-      if (active) {
-        if (!this.rocket.dead) this.rocket.step(FIXED, ctrl);
-        this.world.exhaust(FIXED);
-        this.softBounds();
+    // ---- fixed physics. Settled runs never simulate again (R-04).
+    const rocketLive = this.phase === 'boost' || this.phase === 'fly' || this.phase === 'escape' || this.phase === 'fail';
+    if (this.phase !== 'done') {
+      this.acc += dt;
+      let steps = 0;
+      while (this.acc >= FIXED && steps < 5) {
+        this.acc -= FIXED;
+        steps++;
+        if (rocketLive) {
+          if (!this.rocket.dead) this.rocket.step(FIXED, controllable ? ctrl : { active: false, dx: 0, dy: 1, throttle: 0 });
+          this.world.exhaust(FIXED);
+          this.softBounds();
+        }
+        this.world.step(FIXED);
+        this.resolveEnd();
       }
-      this.world.step(FIXED);
+      if (steps === 5) this.acc = 0;
     }
-    if (steps === 5) this.acc = 0;
     const alpha = this.acc / FIXED;
     this.world.syncVisuals(alpha, dt);
     if (!this.rocket.dead) {
-      if (active) this.rocket.updateVisual(dt, alpha, this.fx);
+      if (rocketLive) this.rocket.updateVisual(dt, alpha, this.fx);
       else {
         this.rocket.model.root.position.set(this.rocket.body.getPosition().x, this.rocket.body.getPosition().y, 0);
         this.rocket.model.root.rotation.z = this.rocket.body.getAngle();
       }
     }
-    this.fx.update(dt);
-    for (const f of this.builder.animated) f(dt, this.elapsed);
+    if (this.phase !== 'done') {
+      this.fx.update(dt);
+      for (const f of this.builder.animated) f(dt, this.elapsed);
+    }
 
     // seesaw board
     this.boardAng = damp(this.boardAng, this.boardTarget, this.phase === 'jump' ? 4 : 40, rawDt);
@@ -406,9 +513,7 @@ export class Flight {
     if (this.phase === 'ready' || this.phase === 'intro' || this.phase === 'jump') this.placeRocketOnBoard();
 
     // kid
-    if (this.phase !== 'jump') {
-      this.kid.spin.rotation.z = damp(this.kid.spin.rotation.z, 0, 10, rawDt);
-    }
+    if (this.phase !== 'jump') this.kid.spin.rotation.z = damp(this.kid.spin.rotation.z, 0, 10, rawDt);
     if (this.kidMood > 0) {
       this.kidMood -= rawDt;
       if (this.kidMood <= 0 && this.phase === 'fly') this.kid.setFace('determined');
@@ -421,14 +526,110 @@ export class Flight {
     if (this.coinStreakT <= 0) this.coinStreak = 0;
     this.chatter();
 
-    // flight bookkeeping
+    // ---- ending timeline
     if (this.phase === 'fly' || this.phase === 'boost') this.flightChecks(rawDt);
-    if (this.phase === 'success' && this.phaseT > 3.6) this.finish(true);
-    if (this.phase === 'fail' && this.phaseT > 2.4) this.finish(false);
+    if (this.phase === 'fly') this.coach(rawDt);
+    if (this.phase === 'escape') this.updateEscape();
+    if (this.phase === 'fail') {
+      if (!this.failConfirmed && this.phaseT >= END.failGrace) {
+        // fail confirmed: nothing that happens now changes the outcome or the ledger
+        this.failConfirmed = true;
+        this.world.ledgerOpen = false;
+      }
+      if (this.phaseT > END.failHold) this.finish(false);
+    }
 
     this.updateCamera(rawDt, false);
     this.updateHud();
     inp.endFrame();
+  }
+
+  private updateEscape() {
+    const r = this.rocket;
+    const zone = this.stage.escapeZone;
+    if (this.escapeEndT < 0 && !r.dead && !this.escaped) {
+      const p = r.body.getPosition();
+      const far = len(p.x - this.targetPos.x, p.y - this.targetPos.y) > (zone ? 6 : END.escapeDist);
+      const outside = !zone || p.x < zone.minX || p.x > zone.maxX || p.y < zone.minY || p.y > zone.maxY;
+      const left = Math.max(0, END.escapeTime - this.phaseT);
+      this.ui.prompt(`🏃 유유히 빠져나가자! ${left.toFixed(1)}초`, false);
+      if (far && outside) {
+        this.escaped = true;
+        this.escapeEndT = this.phaseT;
+        audio.perfect();
+        this.ui.prompt(null);
+        this.ui.banner('유유히 퇴장!', '탈출 보너스 획득', 'perfect');
+        this.say('메롱~ 안녕히 계세요!', 'grin', true);
+      } else if (left <= 0) {
+        this.escapeEndT = this.phaseT;
+        this.ui.prompt(null);
+      }
+    }
+    const hold = r.dead && !this.escaped && this.escapeEndT === 0 ? END.successHoldNoRocket : END.settleAfterEscape;
+    if (this.escapeEndT >= 0 && this.phaseT - this.escapeEndT > hold) {
+      this.ui.prompt(null);
+      this.finish(true);
+    }
+  }
+
+  // ---- onboarding: show only the next thing to do, confirm it by doing it (C-113/114, Q-IN-09)
+  private coach(dt: number) {
+    if (this.stage.index !== 0 || !save.settings.tutorial || save.tutorialDone || this.rocket.dead) {
+      if (this.coachStep) {
+        this.coachStep = null;
+        this.ui.coach(null);
+      }
+      return;
+    }
+    const steps: [string, string][] = [
+      ['thrust', '손가락을 대고 끌어보세요 — 끈 쪽으로 불을 뿜고, 반대쪽으로 날아가요'],
+      ['coast', '이제 손을 떼 보세요 — 연료 없이 관성으로 계속 날아가요'],
+      ['brake', '빠르게 날 때, 날아가는 쪽으로 끌면 반대로 분사 → 브레이크!'],
+      ['target', '빨간 과녁 표시를 따라 목표로 가요'],
+    ];
+    const next = steps.find(([id]) => !save.learned[id]);
+    if (!next) {
+      save.tutorialDone = true;
+      persist();
+      this.ui.coach(null);
+      this.coachStep = null;
+      return;
+    }
+    if (this.coachStep !== next[0]) {
+      this.coachStep = next[0];
+      this.ui.coach(next[1]);
+    }
+    const r = this.rocket;
+    const v = r.body.getLinearVelocity();
+    const sp = len(v.x, v.y);
+    const thrusting = r.throttle > 0.2;
+    let done = false;
+    if (next[0] === 'thrust') {
+      if (thrusting) this.thrustT += dt;
+      done = this.thrustT > 0.5;
+    } else if (next[0] === 'coast') {
+      if (!thrusting && sp > 2.5) this.coastT += dt;
+      done = this.coastT > 0.8;
+    } else if (next[0] === 'brake') {
+      const f = r.facing();
+      if (thrusting && sp > 6 && (f.x * v.x + f.y * v.y) / sp < -0.5) this.brakeT += dt;
+      done = this.brakeT > 0.45;
+    } else if (next[0] === 'target') {
+      const T = this.world.targetEnt;
+      if (T?.body) {
+        const tp = T.body.getPosition();
+        const p = r.body.getPosition();
+        done = len(tp.x - p.x, tp.y - p.y) < 22;
+      }
+    }
+    if (done) {
+      save.learned[next[0]] = true;
+      persist();
+      track('onboarding_step_complete', { step: next[0], attempt: this.attempt, t: Math.round(this.phaseT * 10) / 10 });
+      this.ui.coach('잘했어요! 👍', true);
+      this.coachStep = 'ok';
+      audio.perfect();
+    }
   }
 
   private chatter() {
@@ -455,7 +656,7 @@ export class Flight {
     }
   }
 
-  private updateIntro(dt: number) {
+  private updateIntro() {
     const L = this.builder.launch;
     const t = this.phaseT;
     const hold = 2.0;
@@ -469,10 +670,7 @@ export class Flight {
       this.cam.ty = lerp(this.introFrom.y, L.y + 4, k);
       this.cam.vh = lerp(13, 15, k) + Math.sin(k * Math.PI) * 30;
     }
-    if (t > hold + 1.9 || (t > 0.4 && (this.input.tapped || this.input.pressed))) {
-      this.setPhase('ready');
-    }
-    void dt;
+    if (t > hold + 1.9 || (t > 0.4 && this.input.actionPressed())) this.setPhase('ready');
   }
 
   private startJump() {
@@ -483,7 +681,13 @@ export class Flight {
     audio.unlock();
   }
 
-  private updateJump(dt: number) {
+  /** Air progress 0..1 of the jump, or -1 outside the air time. */
+  jumpProgress() {
+    const t = this.phaseT - JUMP.crouch;
+    return this.phase === 'jump' && t >= 0 && t < JUMP.air ? t / JUMP.air : -1;
+  }
+
+  private updateJump() {
     const L = this.builder.launch;
     const t = this.phaseT;
     const k = this.kid;
@@ -491,17 +695,15 @@ export class Flight {
     const y0 = L.y + 4.3;
     const x1 = L.x + 2.15;
     const y1 = L.y + 0.88 + Math.sin(0.344) * 2.15 + 0.12;
-    const tCrouch = 0.32;
-    const tAir = 1.05;
-    const tLand = tCrouch + tAir;
-    if (t < tCrouch) {
+    const tLand = JUMP.crouch + JUMP.air;
+    if (t < JUMP.crouch) {
       k.root.position.set(x0, y0, 0);
     } else if (t < tLand) {
       if (k.anim === 'crouch') {
         k.play('jump');
         audio.whoosh(true);
       }
-      const s = (t - tCrouch) / tAir;
+      const s = (t - JUMP.crouch) / JUMP.air;
       const H = 6.5;
       k.root.position.x = lerp(x0, x1, s);
       k.root.position.y = lerp(y0, y1, s) + 4 * H * s * (1 - s);
@@ -509,36 +711,36 @@ export class Flight {
       k.spin.rotation.z = flip * Math.PI * 2;
       if (s > 0.18 && s < 0.78) k.play('tuck');
       else if (s >= 0.78) k.play('stomp');
-      // timing ring
-      const ringT = clamp((s - 0.35) / 0.65, 0, 1);
+      // timing ring: green == perfect window, the same constant the judge uses (R-02)
+      const hot = s >= JUMP.perfectFrom;
+      const ringT = clamp((s - JUMP.ringFrom) / (1 - JUMP.ringFrom), 0, 1);
       const sc = this.toScreen(x1, y1);
-      this.ui.timingRing(sc.x, sc.y, ringT, s > 0.35);
-      if (this.input.tapped || this.input.pressed || this.input.isKey('Space')) {
-        if (s > 0.8 && !this.tappedEarly) {
-          if (!this.perfect) {
-            this.perfect = true;
-            audio.perfect();
-            this.ui.banner('완벽한 내려찍기!', '발사 속도 UP +30', 'perfect');
-          }
-        } else if (s > 0.35 && !this.perfect) this.tappedEarly = true;
+      this.ui.timingRing(sc.x, sc.y, ringT, s > JUMP.ringFrom, hot);
+      if (this.input.actionPressed() && !this.perfect && !this.tappedEarly) {
+        if (hot) {
+          this.perfect = true;
+          audio.perfect();
+          this.ui.banner('완벽한 내려찍기!', '발사 속도 UP +30', 'perfect');
+        } else if (s > JUMP.ringFrom) {
+          this.tappedEarly = true;
+          this.ui.popWorld(sc, '조금 빨랐어!', 'warn');
+        }
       }
     } else {
       // IMPACT → launch
-      this.ui.timingRing(0, 0, 0, false);
+      this.ui.timingRing(0, 0, 0, false, false);
       k.root.position.set(x1, L.y + 0.88 - Math.sin(0.344) * 2.15 + 0.12, 0);
       k.spin.rotation.z = 0;
       k.play('crouch');
       this.boardTarget = -0.344;
       this.launch();
     }
-    void dt;
   }
 
   private launch() {
     const L = this.builder.launch;
     const r = this.rocket;
     const body = r.body;
-    // final pose on the flipped board end
     this.boardAng = -0.344;
     const lx = -2.0;
     const ly = 0.1 + -r.model.nozzleY;
@@ -553,28 +755,27 @@ export class Flight {
     r.invuln = 2.8;
     r.throttle = 1;
     this.setPhase('boost');
-    // juice!
     this.fx.ring(L.x + 2.1, L.y + 0.2, 0.4, 3.5, 0.4, 0xfff4d0, true);
     this.fx.impactPuff(L.x + 2.1, L.y + 0.3, 0, 1, 1, 0xd8cfc0);
     this.fx.impactPuff(px, py - 1, 0, -1, 1, 0xffffff);
     this.fx.ring(px, py - 0.8, 0.5, 4, 0.5, 0xffd080, true);
-    this.fx.flash(px, py - 1, 0.5);
+    if (save.settings.flash) this.fx.flash(px, py - 1, 0.5);
     for (let i = 0; i < 14; i++) this.fx.smoke.spawn({ x: px + rand(-0.5, 0.5), y: py - 1, z: rand(-0.6, 0.6), vx: rand(-7, 7), vy: rand(-0.5, 2), life: rand(1, 1.8), s0: 0.3, s1: rand(1, 1.8), c0: 0xffffff, c1: 0xe8e0d0, drag: 2.5, puff: true });
     audio.boing(this.perfect ? 1.3 : 1);
     audio.ignite();
-    this.shake = this.perfect ? 0.9 : 0.6;
+    this.addShake(this.perfect ? 0.9 : 0.6);
     this.ui.popWorld(this.toScreen(L.x + 2.1, L.y + 1.2), '쿵!', 'smash');
     this.ui.popWorld(this.toScreen(px, py), this.perfect ? '슈우우웅!!' : '발사!', 'launch');
     if (this.perfect) this.runCoins += 30;
     this.say(this.perfect ? '완벽해! 간다아아!' : '간다아아아!', 'grin', true);
-    this.ui.showJoyHint(true);
-    setTimeout(() => this.ui.showJoyHint(false), 4200);
-    setTimeout(() => {
+    this.ui.showJoyHint(!save.tutorialDone);
+    this.world.after(4.2, () => this.ui.showJoyHint(false));
+    this.world.after(0.4, () => {
       if (this.phase !== 'done') {
         this.kid.play('remote');
         this.kid.setFace('determined');
       }
-    }, 400);
+    });
   }
 
   private softBounds() {
@@ -592,7 +793,7 @@ export class Flight {
       r.body.applyForceToCenter(Vec2(fx * m, fy * m), true);
       if (this.world.time - this.boundsWarnT > 3) {
         this.boundsWarnT = this.world.time;
-        this.ui.banner('더 가면 엄마한테 혼나!', '', 'warn');
+        this.ui.banner('더 가면 엄마한테 혼나!', '무대 끝이에요', 'warn');
       }
     }
   }
@@ -603,63 +804,73 @@ export class Flight {
     const p = r.body.getPosition();
     this.maxAlt = Math.max(this.maxAlt, p.y - this.launchY);
     if (p.y < this.world.bounds.minY - 5) {
-      this.endReason = '저 멀리 떨어졌다…';
-      this.ui.banner('추락!', '', 'lose');
-      this.setPhase('fail');
+      this.failCandidate(['무대 아래로 떨어졌어요', '아래로 내려갈 땐 위쪽으로 분사해 낙하 속도를 줄이자.'], '추락!');
       return;
     }
+    // C-093: fuel 0 is not a failure by itself — only once the rocket has truly come to rest
     if (r.fuel <= 0 && r.boosting <= 0) {
       this.emptyT += dt;
       if (r.speed() < 0.8) this.settleT += dt;
       else this.settleT = Math.max(0, this.settleT - dt * 0.5);
-      if (this.settleT > 1.4 || this.emptyT > 16) {
-        this.endReason = '연료가 바닥났어요';
-        this.ui.banner('연료 바닥!', '다른 길이나 부품을 시험해보자', 'lose');
-        this.kid.play('sad');
-        this.kid.setFace('worried');
-        audio.sad();
-        this.setPhase('fail');
+      if (this.settleT > 1.4 || this.emptyT > 20) {
+        const T = this.world.targetEnt;
+        const d = T?.body ? Math.round(len(T.body.getPosition().x - p.x, T.body.getPosition().y - p.y)) : 0;
+        this.failCandidate([`연료가 바닥났어요 (목표까지 ${d}m)`, '손을 떼고 관성으로 날면 연료를 아낄 수 있어요. 연료통을 줍거나 큰 연료통을 연구해보자.'], '연료 바닥!');
       }
     }
   }
 
-  private finish(success: boolean) {
+  /** Quit from the pause menu: settle what was earned so far, no result screen. */
+  abandon() {
+    if (this.phase === 'done') return;
+    this.endReason = '중도 포기';
+    this.finish(false, true);
+  }
+
+  private finish(success: boolean, abandoned = false) {
     if (this.phase === 'done') return;
     this.phase = 'done';
+    this.world.ledgerOpen = false;
     const prog = stageProg(this.stage.id);
     const cause = success ? this.targetCause : null;
     const method = cause ? this.stage.methods.find((m) => m.id === cause) ?? null : null;
     const newMethod = !!(cause && method && !prog.methods[cause]);
     const firstClear = success && !prog.cleared;
     const reward = success ? this.stage.reward + (firstClear ? this.stage.reward : 0) + (newMethod && !firstClear ? Math.round(this.stage.reward * 0.5) : 0) : 0;
-    const total = this.runCoins + this.mischief + reward;
-    prog.runs++;
-    if (success) {
-      prog.cleared = true;
-      if (cause && method) prog.methods[cause] = true;
+    const escapeBonus = success && this.escaped ? Math.max(50, Math.round(this.stage.reward * 0.25)) : 0;
+    const total = this.runCoins + this.mischief + reward + escapeBonus;
+    // idempotent settlement: an attempt is paid at most once (C-097, Q-QA-04)
+    const paid = save.lastSettled < this.attempt;
+    if (paid) {
+      prog.runs++;
+      if (success) {
+        prog.cleared = true;
+        if (cause && method) prog.methods[cause] = true;
+        if (this.escaped) prog.escapes++;
+      }
+      prog.bestCoins = Math.max(prog.bestCoins, total);
+      save.coins += total;
+      save.lastSettled = this.attempt;
+      persist();
+      track('currency_source', { currency: 'cap', amount: total, reason: success ? 'success' : abandoned ? 'abandon' : 'fail', attempt: this.attempt });
     }
-    prog.bestCoins = Math.max(prog.bestCoins, total);
-    save.coins += total;
-    persist();
+    track('flight_end', {
+      attempt: this.attempt, level: this.stage.id, result: success ? 'success' : abandoned ? 'abandon' : 'fail', cause: cause ?? null, reason: this.endReason || null,
+      escaped: this.escaped, fuel_left: Math.round(this.rocket.fuel), hull_left: Math.round(this.rocket.hull), hits: this.hits.count, big_hits: this.hits.big,
+      broken: this.world.stats.broken, max_alt: Math.round(this.maxAlt), time: Math.round(this.elapsed),
+    }, 'flight_end:' + this.attempt);
     this.result = {
-      success,
-      stage: this.stage,
-      cause,
+      success, stage: this.stage, cause,
       methodName: method ? `${method.icon} ${method.name}` : cause ? GENERIC_METHOD[cause] ?? null : null,
-      newMethod,
-      coins: this.runCoins,
-      mischief: this.mischief,
-      reward,
-      perfect: this.perfect ? 30 : 0,
-      total,
-      gears: this.gearsGot,
-      broken: this.world.stats.broken,
-      maxAlt: Math.round(this.maxAlt),
-      reason: success ? '' : this.endReason,
-      firstClear,
+      newMethod, coins: this.runCoins, mischief: this.mischief, reward, perfect: this.perfect ? 30 : 0, escapeBonus, escaped: this.escaped,
+      total, gears: this.gearsGot, gearsAgain: this.gearsAgain, broken: this.world.stats.broken, maxAlt: Math.round(this.maxAlt),
+      reason: success ? '' : this.endReason, tip: success ? '' : this.endTip, firstClear, paid,
     };
     this.ui.showJoystick(null);
-    this.ui.showResult(this.result);
+    this.ui.coach(null);
+    this.ui.prompt(null);
+    this.input.reset();
+    if (!abandoned) this.ui.showResult(this.result);
   }
 
   // ================================================================== camera & hud
@@ -672,7 +883,7 @@ export class Flight {
       c.tx = L.x + 2;
       c.ty = L.y + (this.phase === 'jump' ? 5 : 4.2);
       c.vh = this.phase === 'jump' ? 17 : 15;
-    } else if ((this.phase === 'boost' || this.phase === 'fly' || this.phase === 'fail') && !r.dead) {
+    } else if ((this.phase === 'boost' || this.phase === 'fly' || this.phase === 'fail' || this.phase === 'escape') && !r.dead) {
       const p = r.model.root.position;
       const v = r.body.getLinearVelocity();
       const sp = len(v.x, v.y);
@@ -682,18 +893,22 @@ export class Flight {
       const widthWanted = 10.5 + clamp(sp - 6, 0, 24) * 0.16;
       c.vh = clamp(widthWanted / Math.max(0.3, aspect), 17, 30);
       if (this.phase === 'boost') c.vh = Math.max(c.vh, 22);
-    } else if (this.phase === 'success') {
-      const k = clamp(this.phaseT / 0.6, 0, 1);
-      const p = r.dead ? new THREE.Vector3(this.targetPos.x, this.targetPos.y, 0) : r.model.root.position;
-      c.tx = lerp(p.x, this.targetPos.x, 0.65 * k);
-      c.ty = lerp(p.y, this.targetPos.y, 0.65 * k);
+      // just after the target falls, frame it together with the rocket briefly
+      if (this.phase === 'escape' && this.phaseT < 1.2) {
+        c.tx = lerp(c.tx, this.targetPos.x, 0.35);
+        c.ty = lerp(c.ty, this.targetPos.y, 0.35);
+        c.vh = Math.max(c.vh, 24);
+      }
+    } else if (this.phase === 'escape' || (this.phase === 'fail' && r.dead)) {
+      c.tx = this.targetPos.x;
+      c.ty = this.targetPos.y;
       c.vh = 24;
     }
-    const lam = this.phase === 'intro' ? 3 : this.phase === 'fly' || this.phase === 'boost' ? 6 : 4;
+    const lam = this.phase === 'intro' ? 3 : this.phase === 'fly' || this.phase === 'boost' || this.phase === 'escape' ? 6 : 4;
     if (snap) {
       c.x = c.tx;
       c.y = c.ty;
-    } else {
+    } else if (this.phase !== 'done') {
       c.x = damp(c.x, c.tx, lam, dt);
       c.y = damp(c.y, c.ty, lam, dt);
     }
@@ -702,8 +917,7 @@ export class Flight {
     cam.fov = 38;
     const dist = c.vh / 2 / Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
     const curDist = snap ? dist : damp(cam.position.z || dist, dist, 2.2, dt);
-    // shake
-    this.shake = Math.max(0, this.shake - dt * 1.8);
+    this.shake = this.phase === 'done' ? 0 : Math.max(0, this.shake - dt * 1.8);
     const s = this.shake * this.shake;
     const t = this.elapsed;
     const sx = (Math.sin(t * 61) + Math.sin(t * 37.3)) * 0.5 * s * 0.9;
@@ -716,7 +930,6 @@ export class Flight {
     cam.far = curDist + 600;
     cam.updateProjectionMatrix();
     this.lights.follow(c.x, c.y);
-    // sky follows the camera
     this.sky.mesh.position.set(c.x, c.y, -260);
     this.sky.mat.uniforms.camY.value = c.y;
     this.sky.mat.uniforms.time.value = this.elapsed;
@@ -735,9 +948,9 @@ export class Flight {
       gears: this.gearsGot.length,
       alt: Math.max(0, Math.round(p.y - this.launchY)),
       boosting: r.boosting > 0,
+      thrust: r.throttle,
+      empty: !r.dead && r.fuel <= 0 && r.boosting <= 0,
     });
-    if (hullPct < this.lastHullPct - 0.001) this.lastHullPct = hullPct;
-    // target indicator
     if (this.phase === 'fly' || this.phase === 'boost') {
       const T = this.world.targetEnt;
       if (T && T.alive && T.body) {
@@ -747,14 +960,14 @@ export class Flight {
         this.ui.setTarget({ x: sc.x, y: sc.y, dist: Math.round(d), name: this.stage.targetName });
       } else this.ui.setTarget(null);
     } else this.ui.setTarget(null);
-    // joystick visual
     const inp = this.input;
-    if ((this.phase === 'fly' || this.phase === 'boost') && inp.active) this.ui.showJoystick({ ax: inp.ax, ay: inp.ay, px: inp.px, py: inp.py, t: inp.throttle, max: inp.maxDrag });
+    const live = this.phase === 'fly' || this.phase === 'boost' || this.phase === 'escape';
+    if (live && inp.active) this.ui.showJoystick({ ax: inp.ax, ay: inp.ay, px: inp.px, py: inp.py, t: inp.throttle, max: inp.maxDrag, dry: r.fuel <= 0 && r.boosting <= 0 });
     else this.ui.showJoystick(null);
   }
 
   /** Kid shouts something in the HUD bubble. */
-  private say(text: string, face?: import('../render/models/kid').Face, force = false) {
+  private say(text: string, face?: Face, force = false) {
     if (!force && (this.sayCd > 0 || text === this.lastSay)) return;
     this.sayCd = 1.6;
     this.lastSay = text;
@@ -768,7 +981,6 @@ export class Flight {
   render() {
     this.renderer.render(this.scene, this.camera);
     if (this.phase === 'intro' || this.phase === 'done') return;
-    // portrait in the HUD corner
     const r = this.renderer.renderer;
     const rect = this.ui.portraitRect();
     if (!rect) return;
@@ -788,17 +1000,19 @@ export class Flight {
     r.setViewport(0, 0, this.renderer.w, H);
   }
 
+  /** Release everything this run owns (R-07). Shared caches are left alone. */
   dispose() {
     this.ui.showHud(false);
     this.ui.setTarget(null);
     this.ui.showJoystick(null);
-    this.scene.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (m.isMesh && m.geometry && !(m.geometry as any).__shared) {
-        // geometries are cheap to rebuild; free GPU memory
-        m.geometry.dispose();
-      }
-    });
+    this.ui.coach(null);
+    this.ui.prompt(null);
+    this.world.ledgerOpen = false;
+    this.world.dispose();
     this.fx.clear();
+    disposeTree(this.scene);
+    disposeTree(this.pScene);
+    this.scene.clear();
+    this.pScene.clear();
   }
 }

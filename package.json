@@ -9,16 +9,25 @@
     "build": "vite build",
     "build:single": "vite build --mode single",
     "preview": "vite preview --host",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:test": "VITE_TEST_HOOKS=1 vite build --outDir dist-test",
+    "test": "vitest run",
+    "test:e2e": "npm run build:test && playwright test",
+    "check:font": "python3 scripts/check-font.py",
+    "check:release": "node scripts/check-release.mjs",
+    "ci": "npm run typecheck && npm test && npm run build && npm run check:release && npm run test:e2e"
   },
   "dependencies": {
+    "@fontsource/jua": "^5.3.0",
     "planck": "^1.4.2",
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "@types/three": "^0.186.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.2",
-    "vite-plugin-singlefile": "^2.3.3"
+    "vite-plugin-singlefile": "^2.3.3",
+    "vitest": "^5.0.3"
   }
 }

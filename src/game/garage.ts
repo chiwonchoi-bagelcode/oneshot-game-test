@@ -5,7 +5,7 @@ import { buildRocket, RocketModel } from '../render/models/rocket';
 import { Effects } from '../render/effects';
 import { Loadout } from '../data/parts';
 import { cardMat, emissive, feltMat, metalMat, plastic, texMat, woodMat, stripeMat } from '../render/materials';
-import { roundedBox } from '../render/geom';
+import { roundedBox, disposeTree } from '../render/geom';
 import { signTexture, wood } from '../render/textures';
 import * as P from '../render/models/props';
 import { damp, rand } from '../core/math';
@@ -200,7 +200,10 @@ export class Garage {
   }
 
   setLoadout(l: Loadout, poof = false) {
-    if (this.rocket) this.turntable.remove(this.rocket.root);
+    if (this.rocket) {
+      this.turntable.remove(this.rocket.root);
+      disposeTree(this.rocket.root);
+    }
     this.rocket = buildRocket(l);
     this.rocket.root.position.y = 0.1 + -this.rocket.nozzleY;
     this.rocket.flame.visible = false;
@@ -214,7 +217,7 @@ export class Garage {
       this.fx.confettiBurst(p.x, p.y + 1, 30, 6);
       this.hop = 1;
       this.kid.play('cheer');
-      setTimeout(() => this.kid.play(this.mode === 'garage' ? 'build' : 'idle'), 900);
+      this.cheerT = 0.9;
     }
   }
 
@@ -224,8 +227,14 @@ export class Garage {
     this.kid.setFace(m === 'garage' ? 'determined' : 'grin');
   }
 
+  private cheerT = 0;
+
   update(dt: number) {
     this.t += dt;
+    if (this.cheerT > 0) {
+      this.cheerT -= dt;
+      if (this.cheerT <= 0) this.kid.play(this.mode === 'garage' ? 'build' : 'idle');
+    }
     const aspect = this.renderer.w / this.renderer.h;
     this.camera.aspect = aspect;
     let pos: THREE.Vector3;

@@ -1,9 +1,13 @@
 import { clamp, len } from './math';
 
 /**
- * One-thumb floating joystick.
+ * One-thumb floating joystick (input contract: docs/spec-core.md §입력).
  * The player drags from where they touched; the drag vector is the direction the
  * fuel jet sprays. The rocket accelerates the opposite way.
+ *
+ *  - one primary pointer only: other fingers / palm touches are ignored
+ *  - pointercancel, window blur, pause and screen changes release the stick (no stuck thrust)
+ *  - `pressed` is the single press edge of a frame (pointerdown or a fresh key press)
  */
 export class FlightInput {
   active = false;
@@ -25,6 +29,7 @@ export class FlightInput {
   private downX = 0;
   private downY = 0;
   private keys = new Set<string>();
+  private keyEdges = new Set<string>();
   enabled = true;
 
   /** Drag length (CSS px) giving full throttle. */
@@ -35,15 +40,18 @@ export class FlightInput {
     el.addEventListener('pointerdown', this.onDown, { passive: false });
     window.addEventListener('pointermove', this.onMove, { passive: false });
     window.addEventListener('pointerup', this.onUp);
-    window.addEventListener('pointercancel', this.onUp);
+    window.addEventListener('pointercancel', this.onCancel);
     window.addEventListener('keydown', (e) => {
+      if (!e.repeat && !this.keys.has(e.code)) this.keyEdges.add(e.code);
       this.keys.add(e.code);
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
-    window.addEventListener('blur', () => {
-      this.keys.clear();
-      this.release();
-    });
+    window.addEventListener('blur', () => this.reset());
+  }
+
+  /** Joystick sensitivity from settings (1 = default). Higher = shorter drag for full power. */
+  setSensitivity(s: number) {
+    this.maxDrag = clamp(64 / s, 32, 110);
   }
 
   private rect() {
@@ -52,7 +60,8 @@ export class FlightInput {
 
   private onDown = (e: PointerEvent) => {
     if (!this.enabled) return;
-    if (this.pointerId !== null) return;
+    if (this.pointerId !== null) return; // a second finger never steals the stick
+    if (e.button !== undefined && e.button > 0) return;
     e.preventDefault();
     this.pointerId = e.pointerId;
     const r = this.rect();
@@ -93,10 +102,25 @@ export class FlightInput {
     this.release();
   };
 
+  private onCancel = (e: PointerEvent) => {
+    if (e.pointerId !== this.pointerId) return;
+    this.release();
+  };
+
+  /** Let go of the stick (pointer released / cancelled / screen changed). */
   release() {
     this.pointerId = null;
     this.active = false;
     this.throttle = 0;
+  }
+
+  /** Full reset: stick, held keys and pending edges (pause, app switch, new run). */
+  reset() {
+    this.release();
+    this.keys.clear();
+    this.keyEdges.clear();
+    this.pressed = false;
+    this.tapped = false;
   }
 
   private update() {
@@ -133,8 +157,19 @@ export class FlightInput {
     return this.keys.has(code);
   }
 
+  /** True only on the frame the key went down (holding does not repeat). */
+  keyPressed(code: string) {
+    return this.keyEdges.has(code);
+  }
+
+  /** A fresh "action" press this frame: touch/click down or Space/Enter edge. */
+  actionPressed() {
+    return this.pressed || this.keyPressed('Space') || this.keyPressed('Enter');
+  }
+
   endFrame() {
     this.pressed = false;
     this.tapped = false;
+    this.keyEdges.clear();
   }
 }

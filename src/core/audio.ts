@@ -42,10 +42,10 @@ export class Audio {
     this.master.gain.value = 0.8;
     this.master.connect(comp).connect(ctx.destination);
     this.sfxBus = ctx.createGain();
-    this.sfxBus.gain.value = this.sfxOn ? 1 : 0;
+    this.sfxBus.gain.value = this.sfxOn ? this.sfxVol : 0;
     this.sfxBus.connect(this.master);
     this.musicBus = ctx.createGain();
-    this.musicBus.gain.value = this.musicOn ? 0.32 : 0;
+    this.musicBus.gain.value = this.musicOn ? 0.32 * this.musicVol : 0;
     this.musicBus.connect(this.master);
     const len = ctx.sampleRate * 2;
     this.noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -55,13 +55,28 @@ export class Audio {
     this.startMusic();
   }
 
+  sfxVol = 1;
+  musicVol = 0.8;
   setSfx(on: boolean) {
     this.sfxOn = on;
-    if (this.ctx) this.sfxBus.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.05);
+    if (this.ctx) this.sfxBus.gain.setTargetAtTime(on ? this.sfxVol : 0, this.ctx.currentTime, 0.05);
   }
   setMusic(on: boolean) {
     this.musicOn = on;
-    if (this.ctx) this.musicBus.gain.setTargetAtTime(on ? 0.32 : 0, this.ctx.currentTime, 0.1);
+    if (this.ctx) this.musicBus.gain.setTargetAtTime(on ? 0.32 * this.musicVol : 0, this.ctx.currentTime, 0.1);
+  }
+  /** 0..1 bus volumes from settings. */
+  setVolumes(sfx: number, music: number) {
+    this.sfxVol = sfx;
+    this.musicVol = music;
+    this.setSfx(this.sfxOn);
+    this.setMusic(this.musicOn);
+  }
+  /** Silence everything while the app is hidden (C-121). */
+  suspend(on: boolean) {
+    if (!this.ctx) return;
+    if (on) this.ctx.suspend().catch(() => {});
+    else this.ctx.resume().catch(() => {});
   }
 
   private throttle(key: string, minGap: number) {

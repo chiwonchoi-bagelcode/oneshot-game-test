@@ -454,9 +454,17 @@ export function bottleCapGeometry() {
   return g;
 }
 
-export function gearPickup() {
+/** Gear collectible. `owned` = already collected in an earlier run: a pale silver ghost. */
+export function gearPickup(owned = false) {
   const g = new THREE.Group();
   const geo = extrudeShape(gearShape(10, 0.6, 0.48, 0.18), 0.22, 0.04, 1);
+  if (owned) {
+    const ghost = new THREE.MeshStandardMaterial({ color: '#cfd6de', roughness: 0.5, metalness: 0.3, transparent: true, opacity: 0.45 });
+    g.add(mesh(geo, ghost, false, false));
+    const check = mesh(new THREE.TorusGeometry(0.2, 0.05, 8, 20), ghost, false, false);
+    g.add(check);
+    return g;
+  }
   const m = mesh(geo, shiny('#ffcc33', 0.2, 1));
   g.add(m);
   const hub = mesh(new THREE.TorusGeometry(0.2, 0.05, 8, 20), shiny('#fff2b0', 0.2, 1));

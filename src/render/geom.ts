@@ -41,6 +41,7 @@ export function roundedBox(w: number, h: number, d: number, r = 0.08, uvScale = 
     const rr = Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001);
     g = new RoundedBoxGeometry(w, h, d, seg, Math.max(0.001, rr));
     boxUV(g, uvScale);
+    g.userData.shared = true;
     rbCache.set(key, g);
   }
   return g;
@@ -138,6 +139,21 @@ export function bakeStatic(roots: THREE.Object3D[], out: THREE.Group) {
     out.add(mesh);
   }
   return buckets.size;
+}
+
+/**
+ * Free GPU resources owned by a subtree (R-07). Geometries/materials flagged
+ * `userData.shared` belong to process-wide caches and are kept; textures are always cached.
+ */
+export function disposeTree(root: THREE.Object3D) {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh && !(o as any).isPoints && !(o as any).isLine) return;
+    if (m.geometry && !m.geometry.userData.shared) m.geometry.dispose();
+    const mats = Array.isArray(m.material) ? m.material : m.material ? [m.material] : [];
+    for (const mat of mats) if (!mat.userData.shared) mat.dispose();
+    if ((m as any).isInstancedMesh) (m as unknown as THREE.InstancedMesh).dispose();
+  });
 }
 
 /** Star / gear outline shape. */

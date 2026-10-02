@@ -6,6 +6,7 @@ import { blockMesh, bottleCapGeometry, gearPickup, fuelCan } from '../render/mod
 import { GRAVITY, RocketStats } from '../data/parts';
 import { audio } from '../core/audio';
 import { clamp, distPointSeg, len, rand, wrapAngle } from '../core/math';
+import { disposeTree } from '../render/geom';
 import { shiny } from '../render/materials';
 
 const Vec2 = planck.Vec2;
@@ -68,7 +69,7 @@ export interface RocketLike {
   dead: boolean;
   throttle: number;
   facing(): { x: number; y: number };
-  damage(amount: number, x: number, y: number, kind: string): void;
+  damage(amount: number, x: number, y: number, kind: string, info?: { mat?: string; speed?: number }): void;
   nozzleWorld(): { x: number; y: number; dx: number; dy: number };
 }
 
@@ -136,13 +137,15 @@ export interface Pickup {
   t: number;
   loose?: boolean;
   delay?: number;
+  /** a collectible the player already owns (shown as a ghost, no new reward) */
+  owned?: boolean;
 }
 
 export interface WorldEvents {
   onBreak(e: Ent, cause: Cause): void;
   onTarget(e: Ent, cause: Cause): void;
   onCoin(value: number, x: number, y: number): void;
-  onGear(id: string, x: number, y: number): void;
+  onGear(id: string, x: number, y: number, alreadyOwned: boolean): void;
   onFuel(amount: number, x: number, y: number): void;
   onText(x: number, y: number, text: string, style?: string): void;
   onShake(amount: number): void;
@@ -182,6 +185,10 @@ export class GameWorld {
   targetDone = false;
   /** per-physics-step hooks (moving platforms etc.) */
   stepHooks: ((dt: number) => void)[] = [];
+  /** game-time scheduled callbacks (never wall clock: pauses and hit-stops stay consistent) */
+  private timers: { t: number; fn: () => void }[] = [];
+  /** When false, pickups and the target no longer change the run's economy/outcome. */
+  ledgerOpen = true;
 
   constructor(scene: THREE.Group, fx: Effects, events: WorldEvents) {
     this.scene = scene;
@@ -206,8 +213,13 @@ export class GameWorld {
     scene.add(this.coinMesh);
   }
 
+  /** Drop everything that could still call back into a finished run (timers, hooks). */
   dispose() {
-    this.scene.clear();
+    this.timers.length = 0;
+    this.stepHooks.length = 0;
+    this.actions.length = 0;
+    this.breakQ.length = 0;
+    this.rocket = null;
   }
 
   // ================================================================== creation
@@ -374,11 +386,16 @@ export class GameWorld {
     return p;
   }
 
-  addGear(id: string, x: number, y: number) {
-    const obj = gearPickup();
+  /** Schedule fn after `sec` of simulated game time. */
+  after(sec: number, fn: () => void) {
+    this.timers.push({ t: this.time + sec, fn });
+  }
+
+  addGear(id: string, x: number, y: number, owned = false) {
+    const obj = gearPickup(owned);
     obj.position.set(x, y, 0);
     this.scene.add(obj);
-    const p: Pickup = { kind: 'gear', id, x, y, vx: 0, vy: 0, taken: false, value: 1, obj, t: 0 };
+    const p: Pickup = { kind: 'gear', id, x, y, vx: 0, vy: 0, taken: false, value: 1, obj, t: 0, owned };
     this.pickups.push(p);
     return p;
   }
@@ -507,7 +524,7 @@ export class GameWorld {
       const p = wm.points[0] ?? rb.getPosition();
       this.queueBreak(other, 'ram', vr.x * 0.6, vr.y * 0.6, p.x, p.y);
       this.actions.push(() => {
-        this.rocket?.damage(dmg, p.x, p.y, 'smash');
+        this.rocket?.damage(dmg, p.x, p.y, 'smash', { mat: other.mat, speed: vn });
         const big = other.maxHp > 40;
         this.events.onHitStop(big ? 0.07 : 0.035);
         this.events.onShake(big ? 0.55 : 0.3);
@@ -536,12 +553,25 @@ export class GameWorld {
     this.damageFrom(b, a, J);
   }
 
+  /**
+   * Cause contract (see docs/spec-core.md §판정):
+   *  rocket contact → ram · a body flagged as a device (cut rope, cannon shell) → device ·
+   *  otherwise the chain cause the moving body inherited (boom/device/fire/water/topple) while it is
+   *  still in motion from that chain · otherwise topple (knocked/fell).
+   */
+  hintAlive(e?: Ent | null) {
+    if (!e || !e.hint) return false;
+    const age = this.time - (e.hintT ?? -99);
+    if (age < 4) return true;
+    // the chain stays attached while the body is still moving because of it
+    return !!e.body && e.body.isAwake() && age < 30;
+  }
+
   private causeFrom(other: Ent, self?: Ent): Cause {
     if (this.isRocket(other)) return 'ram';
     if (other.device) return 'device';
-    const fresh = (e?: Ent) => e && e.hint && this.time - (e.hintT ?? -99) < 9;
-    if (fresh(self)) return self!.hint!;
-    if (fresh(other)) return other.hint!;
+    if (this.hintAlive(self)) return self!.hint!;
+    if (this.hintAlive(other)) return other.hint!;
     return 'topple';
   }
 
@@ -557,7 +587,8 @@ export class GameWorld {
       seen.add(b);
       const e = b.getUserData() as Ent;
       if (e && e.kind !== 'terrain' && e.kind !== 'rocket') {
-        if (!e.hint || this.time - (e.hintT ?? -99) > 6) {
+        // the first chain to set something in motion owns it until it settles
+        if (!this.hintAlive(e)) {
           e.hint = cause;
           e.hintT = this.time;
         }
@@ -627,7 +658,7 @@ export class GameWorld {
     if (dv > safe) {
       const dmg = (dv - safe) * 4.6 * info.hardness * 2 * (noseHit ? st.frontArmor : 1) / st.armor;
       if (dmg > 0.5) {
-        this.actions.push(() => R.damage(dmg, p.x, p.y, 'crash'));
+        this.actions.push(() => R.damage(dmg, p.x, p.y, 'crash', { mat: other.kind === 'terrain' ? other.mat : other.mat, speed: dv }));
       }
     }
     // damage the other thing
@@ -734,13 +765,14 @@ export class GameWorld {
     const info = matInfo(e.mat);
     e.alive = false;
     // anything this was holding up inherits a special cause (boom/device/water/fire)
-    this.propagateHint([body], cause === 'ram' ? (e.hint && this.time - (e.hintT ?? -99) < 9 ? e.hint : 'ram') : cause);
+    this.propagateHint([body], cause === 'ram' && this.hintAlive(e) ? e.hint! : cause);
     // detach ropes attached to this ent
     for (const r of this.ropes) if (r.alive && (r.b === e || r.a === body)) this.cutRope(r, false);
     this.pw.destroyBody(body);
     e.body = null;
     if (e.obj) {
       this.scene.remove(e.obj);
+      disposeTree(e.obj);
     }
     // ---- debris
     if (!e.noDebris) {
@@ -786,7 +818,7 @@ export class GameWorld {
     }
     e.onBreak?.(cause, e);
     this.events.onBreak(e, cause);
-    if (e.isTarget && !this.targetDone) {
+    if (e.isTarget && !this.targetDone && this.ledgerOpen) {
       this.targetDone = true;
       this.events.onTarget(e, cause);
     }
@@ -831,7 +863,10 @@ export class GameWorld {
       e.body = null;
     }
     e.alive = false;
-    if (e.obj) this.scene.remove(e.obj);
+    if (e.obj) {
+      this.scene.remove(e.obj);
+      disposeTree(e.obj);
+    }
     const i = this.ents.indexOf(e);
     if (i >= 0) this.ents.splice(i, 1);
     if (e.kind === 'water') {
@@ -853,7 +888,9 @@ export class GameWorld {
     }
     r.mesh.visible = false;
     if (r.b.alive) {
-      r.b.device = true;
+      if (r.cutCause === 'device') r.b.device = true;
+      r.b.hint = r.cutCause;
+      r.b.hintT = this.time;
       r.b.body?.setAwake(true);
     }
     if (fx) {
@@ -1042,6 +1079,13 @@ export class GameWorld {
     this.updateLifetimes(dt);
     this.updateFire(dt);
     this.updatePickups(dt);
+    if (this.timers.length) {
+      const due = this.timers.filter((t) => t.t <= this.time);
+      if (due.length) {
+        this.timers = this.timers.filter((t) => t.t > this.time);
+        for (const t of due) t.fn();
+      }
+    }
   }
 
   private applyForces(dt: number) {
@@ -1052,9 +1096,10 @@ export class GameWorld {
         e.body.applyForceToCenter(Vec2(0, m * GRAVITY * e.buoyancy), true);
       }
     }
-    // wind zones
+    // wind zones (each zone tests every body it overlaps on its own — order never hides a zone)
     for (const z of this.winds) {
       if (!z.active) continue;
+      const done = new Set<planck.Body>();
       const ca = Math.cos(z.ang);
       const sa = Math.sin(z.ang);
       const cx = z.x + ca * z.len * 0.5;
@@ -1064,14 +1109,14 @@ export class GameWorld {
         const b = f.getBody();
         if (!b.isDynamic()) return true;
         const e = b.getUserData() as Ent;
-        if (!e || e.data?.windStamp === this.time) return true;
-        e.data = { ...(e.data || {}), windStamp: this.time };
+        if (!e || done.has(b)) return true;
         const p = b.getWorldCenter();
         const dx = p.x - z.x;
         const dy = p.y - z.y;
         const along = dx * ca + dy * sa;
         const across = -dx * sa + dy * ca;
         if (along < 0 || along > z.len || Math.abs(across) > z.wid / 2) return true;
+        done.add(b);
         const fall = (1 - along / z.len) * 0.6 + 0.4;
         const m = b.getMass();
         const acc = z.power * fall * (e.kind === 'rocket' ? 1 : e.kind === 'water' ? 0.4 : 0.7);
@@ -1244,7 +1289,7 @@ export class GameWorld {
         p.x += p.vx * dt;
         p.y += p.vy * dt;
       }
-      if (!rp) continue;
+      if (!rp || !this.ledgerOpen) continue;
       const dx = rp.x - p.x;
       const dy = rp.y - p.y;
       const d = len(dx, dy);
@@ -1263,10 +1308,15 @@ export class GameWorld {
           this.fx.sparkle(p.x, p.y);
           this.events.onCoin(p.value, p.x, p.y);
         } else if (p.kind === 'gear') {
-          audio.gear();
-          this.fx.sparkle(p.x, p.y, 0xffe060);
-          this.fx.confettiBurst(p.x, p.y, 30, 8);
-          this.events.onGear(p.id!, p.x, p.y);
+          if (p.owned) {
+            audio.coin();
+            this.fx.sparkle(p.x, p.y, 0xcfd8e0);
+          } else {
+            audio.gear();
+            this.fx.sparkle(p.x, p.y, 0xffe060);
+            this.fx.confettiBurst(p.x, p.y, 30, 8);
+          }
+          this.events.onGear(p.id!, p.x, p.y, !!p.owned);
         } else {
           audio.fuel();
           this.fx.sparkle(p.x, p.y, 0xffa040);

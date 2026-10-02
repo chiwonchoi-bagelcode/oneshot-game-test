@@ -131,6 +131,7 @@ export function getMaterial(name: string): THREE.Material {
   if (!m) {
     const info = MATS[name] ?? MATS.wood;
     m = info.make();
+    m.userData.shared = true;
     matCache.set(name, m);
   }
   return m;
@@ -147,6 +148,7 @@ export function feltMat(color: string, rough = 0.95) {
   let m = colCache.get(k);
   if (!m) {
     m = new THREE.MeshStandardMaterial({ ...T.felt(color), roughness: rough });
+    m.userData.shared = true;
     colCache.set(k, m);
   }
   return m;
@@ -157,6 +159,7 @@ export function knitMat(color: string) {
   if (!m) {
     const tp = T.knit(color);
     m = new THREE.MeshStandardMaterial({ map: tp.map, normalMap: tp.normalMap, roughness: 1, normalScale: new THREE.Vector2(0.8, 0.8) });
+    m.userData.shared = true;
     colCache.set(k, m);
   }
   return m;
@@ -166,6 +169,7 @@ export function plastic(color: number | string, rough = 0.35, metal = 0) {
   let m = colCache.get(k);
   if (!m) {
     m = new THREE.MeshStandardMaterial({ color: color as any, roughness: rough, metalness: metal });
+    m.userData.shared = true;
     colCache.set(k, m);
   }
   return m;
@@ -178,6 +182,7 @@ export function emissive(color: number | string, intensity = 2) {
   let m = colCache.get(k);
   if (!m) {
     m = new THREE.MeshStandardMaterial({ color: color as any, emissive: color as any, emissiveIntensity: intensity, roughness: 0.5 });
+    m.userData.shared = true;
     colCache.set(k, m);
   }
   return m;
@@ -187,6 +192,7 @@ export function cardMat(color = '#c89b62') {
   let m = colCache.get(k);
   if (!m) {
     m = new THREE.MeshStandardMaterial({ ...T.cardboard(color), roughness: 0.95 });
+    m.userData.shared = true;
     colCache.set(k, m);
   }
   return m;
@@ -196,6 +202,7 @@ export function woodMat(color = '#c08550') {
   let m = colCache.get(k);
   if (!m) {
     m = new THREE.MeshStandardMaterial({ ...T.wood(color, 256, false), roughness: 0.85 });
+    m.userData.shared = true;
     colCache.set(k, m);
   }
   return m;
@@ -205,6 +212,7 @@ export function metalMat(color = '#9aa3ad', rough = 0.35) {
   let m = colCache.get(k);
   if (!m) {
     m = new THREE.MeshStandardMaterial({ ...T.metal(color, 256, false), roughness: rough, metalness: 0.8 });
+    m.userData.shared = true;
     colCache.set(k, m);
   }
   return m;
@@ -214,6 +222,7 @@ export function stripeMat(colors: string[], vertical = false) {
   let m = colCache.get(k);
   if (!m) {
     m = new THREE.MeshStandardMaterial({ ...T.stripes(colors, 256, vertical), roughness: 0.95 });
+    m.userData.shared = true;
     colCache.set(k, m);
   }
   return m;
@@ -223,6 +232,7 @@ export function polkaMat(bg: string, dot: string) {
   let m = colCache.get(k);
   if (!m) {
     m = new THREE.MeshStandardMaterial({ ...T.polka(bg, dot), roughness: 0.8 });
+    m.userData.shared = true;
     colCache.set(k, m);
   }
   return m;
@@ -232,6 +242,7 @@ export function texMat(key: string, tex: THREE.Texture, rough = 0.6, extra: THRE
   let m = colCache.get(k);
   if (!m) {
     m = new THREE.MeshStandardMaterial({ map: tex, roughness: rough, ...extra });
+    m.userData.shared = true;
     colCache.set(k, m);
   }
   return m;
