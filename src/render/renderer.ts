@@ -125,10 +125,15 @@ export function createSky(colors: SkyColors) {
         float n = noise(vW.xy * 0.35) * 0.5 + noise(vW.xy * 1.7) * 0.5;
         c *= 0.97 + n * 0.05;
         // stars at altitude
-        vec2 sp = floor(vW.xy * 0.6);
-        float s = step(0.985, hash(sp)) * t3;
-        float tw = 0.6 + 0.4 * sin(time * 3.0 + hash(sp) * 30.0);
-        c += vec3(s * tw);
+        vec2 g = vW.xy * 0.22;
+        vec2 sp = floor(g);
+        vec2 fr = fract(g) - 0.5;
+        float h = hash(sp);
+        vec2 off = vec2(hash(sp + 7.1), hash(sp + 3.3)) - 0.5;
+        float dd = length(fr - off * 0.6);
+        float star = step(0.93, h) * smoothstep(0.09, 0.02, dd) * t3;
+        float tw = 0.6 + 0.4 * sin(time * 3.0 + h * 30.0);
+        c += vec3(1.0, 0.95, 0.8) * star * tw;
         gl_FragColor = vec4(c, 1.0);
         #include <colorspace_fragment>
       }`,

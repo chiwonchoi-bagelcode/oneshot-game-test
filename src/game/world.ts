@@ -180,6 +180,8 @@ export class GameWorld {
   bounds = { minX: -200, maxX: 200, minY: -60, maxY: 400 };
   targetEnt: Ent | null = null;
   targetDone = false;
+  /** per-physics-step hooks (moving platforms etc.) */
+  stepHooks: ((dt: number) => void)[] = [];
 
   constructor(scene: THREE.Group, fx: Effects, events: WorldEvents) {
     this.scene = scene;
@@ -621,9 +623,9 @@ export class GameWorld {
       });
     }
     // rocket self damage
-    const safe = 6.5;
+    const safe = 8;
     if (dv > safe) {
-      const dmg = (dv - safe) * 6.2 * info.hardness * 2 * (noseHit ? st.frontArmor : 1) / st.armor;
+      const dmg = (dv - safe) * 4.6 * info.hardness * 2 * (noseHit ? st.frontArmor : 1) / st.armor;
       if (dmg > 0.5) {
         this.actions.push(() => R.damage(dmg, p.x, p.y, 'crash'));
       }
@@ -655,9 +657,14 @@ export class GameWorld {
   }
 
   private beginContact(c: planck.Contact) {
-    const a = this.entOf(c.getFixtureA());
-    const b = this.entOf(c.getFixtureB());
+    const fa = c.getFixtureA();
+    const fb = c.getFixtureB();
+    const a = this.entOf(fa);
+    const b = this.entOf(fb);
     if (!a || !b) return;
+    // weak points (e.g. the blimp valve) react to the rocket's touch
+    if (fa.getUserData() === 'weak' && this.isRocket(b) && a.alive) this.actions.push(() => a.data?.onWeak?.());
+    if (fb.getUserData() === 'weak' && this.isRocket(a) && b.alive) this.actions.push(() => b.data?.onWeak?.());
     if (a.kind === 'water' || b.kind === 'water') {
       const w = a.kind === 'water' ? a : b;
       const o = a.kind === 'water' ? b : a;
@@ -701,6 +708,11 @@ export class GameWorld {
   }
 
   // ================================================================== breaking
+  /** Run something after the current physics step (safe to create/destroy bodies). */
+  queueAction(fn: () => void) {
+    this.actions.push(fn);
+  }
+
   queueBreak(e: Ent, cause: Cause, vx = 0, vy = 0, hx?: number, hy?: number) {
     if (!e.alive || e.data?.queued) return;
     e.data = { ...(e.data || {}), queued: true };
@@ -945,9 +957,7 @@ export class GameWorld {
         const col = st.exhaust === 'powder' ? 0xffffff : 0xd8cfc0;
         this.fx.smoke.spawn({ x: hitP.x, y: hitP.y, z: rand(-0.5, 0.5), vx: -Math.sin(a) * rand(-6, 6), vy: rand(1, 3), life: rand(0.5, 1.0), s0: 0.2, s1: rand(0.7, 1.2), c0: col, c1: 0xf4f0e8, drag: 3, puff: true });
       }
-      if (st.exhaust === 'torch' && e.flammable && e.alive) {
-        e.heat += dt * 1.6 * strength * 3;
-      }
+
       if (st.exhaust === 'powder' && (e.burning || e.heat > 0)) {
         if (e.burning) {
           audio.sizzle();
@@ -955,6 +965,24 @@ export class GameWorld {
         }
         e.burning = false;
         e.heat = 0;
+      }
+    }
+    // torch: heat anything flammable inside the flame cone
+    if (st.exhaust === 'torch') {
+      const seen = new Set<Ent>();
+      for (const t of [0.6, 1.6, 2.8, 4.0, 5.2]) {
+        const d = t * (0.55 + 0.45 * R.throttle);
+        const px = nz.x + nz.dx * d;
+        const py = nz.y + nz.dy * d;
+        const rr = 0.5 + t * 0.15;
+        this.pw.queryAABB({ lowerBound: Vec2(px - rr, py - rr), upperBound: Vec2(px + rr, py + rr) } as any, (f) => {
+          const e = this.entOf(f);
+          if (!e || !e.alive || !e.flammable || seen.has(e) || f.isSensor()) return true;
+          seen.add(e);
+          e.heat += dt * 2.6 * (0.35 + 0.65 * R.throttle);
+          if (Math.random() < 0.3) this.fx.fire(px, py, 0.4, 0.5);
+          return true;
+        });
       }
     }
     // rope burning / fire zones
@@ -1004,6 +1032,7 @@ export class GameWorld {
     }
     // reset punch flags on things that were broken already (they're gone) – fine
     this.applyForces(dt);
+    for (const h of this.stepHooks) h(dt);
     this.pw.step(dt, 8, 3);
     for (const a of this.actions) a();
     this.actions.length = 0;
@@ -1151,8 +1180,13 @@ export class GameWorld {
           if (e.hp <= 0) this.queueBreak(e, 'fire');
         }
         if (e.kind === 'fireworks' && e.burnT > 1.0) this.queueBreak(e, 'boom');
+        if (e.data?.fuse && e.burnT > e.data.fuse) this.queueBreak(e, 'fire');
         if (e.kind === 'balloon') this.queueBreak(e, 'fire');
       } else if (e.flammable) {
+        if (e.heat > 0.25 && Math.random() < e.heat) {
+          const p = e.body.getPosition();
+          this.fx.smoke.spawn({ x: p.x + rand(-e.w, e.w) * 0.4, y: p.y + e.h * 0.4, z: 0.4, vx: rand(-0.4, 0.4), vy: rand(1, 2), life: 1, s0: 0.1, s1: 0.5, c0: 0x777066, c1: 0xb0aaa0, drag: 1, puff: true });
+        }
         if (e.heat >= 1) {
           e.burning = true;
           e.burnT = 0;
@@ -1309,7 +1343,7 @@ export class GameWorld {
         const ca = Math.cos(z.ang);
         const sa = Math.sin(z.ang);
         const off = rand(-z.wid / 2, z.wid / 2);
-        const along = rand(0, z.len * 0.3);
+        const along = rand(0, z.len * (z.blades ? 0.3 : 1));
         this.fx.sparks.spawn({
           x: z.x + ca * along - sa * off, y: z.y + sa * along + ca * off, z: rand(-1, 1),
           vx: ca * z.power * 0.9, vy: sa * z.power * 0.9, life: rand(0.5, 1.0), s0: 0.25, s1: 0.1, c0: 0x9ad8ff, c1: 0xffffff, stretch: 0.15,

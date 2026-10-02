@@ -197,7 +197,7 @@ export function cake() {
 
 export function blimp() {
   const g = new THREE.Group();
-  const env = mesh(new THREE.SphereGeometry(1, 32, 20), stripeMat(['#f2f2f2', '#e8443a'], true));
+  const env = mesh(new THREE.SphereGeometry(1, 32, 20), stripeMat(['#f2f2f2', '#e8443a', '#f2f2f2', '#e8443a', '#f2f2f2', '#e8443a', '#f2f2f2', '#e8443a'], false));
   env.scale.set(5.2, 2.0, 2.0);
   g.add(env);
   // fins

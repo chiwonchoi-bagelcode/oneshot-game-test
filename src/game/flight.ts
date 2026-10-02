@@ -17,6 +17,11 @@ import type { UI } from '../ui/ui';
 const Vec2 = planck.Vec2;
 const FIXED = 1 / 60;
 
+/** Names for causes a stage doesn't list as an official method (e.g. a kamikaze explosion). */
+const GENERIC_METHOD: Record<string, string> = {
+  ram: '💥 정면 돌파', topple: '🪵 무너뜨리기', boom: '💣 자폭 돌격', water: '💦 물바다', fire: '🔥 불장난', device: '⚙️ 장치 활용', precision: '🎯 정밀 저격',
+};
+
 type Phase = 'intro' | 'ready' | 'jump' | 'boost' | 'fly' | 'success' | 'fail' | 'done';
 
 export interface RunResult {
@@ -235,7 +240,7 @@ export class Flight {
     this.slowmo = 1.6;
     this.shake = 1;
     const m = this.stage.methods.find((mm) => mm.id === cause);
-    this.ui.banner('장난 대성공!', m ? `${m.icon} ${m.name}` : '', 'win');
+    this.ui.banner('장난 대성공!', m ? `${m.icon} ${m.name}` : GENERIC_METHOD[cause] ?? '', 'win');
     this.kid.play('cheer');
     this.kid.setFace('grin');
     this.setPhase('success');
@@ -547,14 +552,14 @@ export class Flight {
     const prog = stageProg(this.stage.id);
     const cause = success ? this.targetCause : null;
     const method = cause ? this.stage.methods.find((m) => m.id === cause) ?? null : null;
-    const newMethod = !!(cause && !prog.methods[cause]);
+    const newMethod = !!(cause && method && !prog.methods[cause]);
     const firstClear = success && !prog.cleared;
     const reward = success ? this.stage.reward + (firstClear ? this.stage.reward : 0) + (newMethod && !firstClear ? Math.round(this.stage.reward * 0.5) : 0) : 0;
     const total = this.runCoins + this.mischief + reward;
     prog.runs++;
     if (success) {
       prog.cleared = true;
-      if (cause) prog.methods[cause] = true;
+      if (cause && method) prog.methods[cause] = true;
     }
     prog.bestCoins = Math.max(prog.bestCoins, total);
     save.coins += total;
@@ -563,7 +568,7 @@ export class Flight {
       success,
       stage: this.stage,
       cause,
-      methodName: method ? `${method.icon} ${method.name}` : null,
+      methodName: method ? `${method.icon} ${method.name}` : cause ? GENERIC_METHOD[cause] ?? null : null,
       newMethod,
       coins: this.runCoins,
       mischief: this.mischief,
