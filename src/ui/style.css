@@ -158,6 +158,7 @@ body {
   position: absolute; top: 72px; right: 10px; width: 168px; padding: 10px 10px 8px; border-radius: 16px;
   background: rgba(255, 244, 224, 0.92); border: 3px solid #fff; box-shadow: var(--shadow); font-size: 12px;
 }
+.bc-warn { margin-top: 5px; font-size: 11.5px; line-height: 1.25; color: #fff; background: #d8442a; border-radius: 8px; padding: 4px 6px; animation: pulse 1s infinite; }
 .bc-style { color: #fff; border-radius: 99px; text-align: center; font-size: 15px; padding: 2px 0; margin-bottom: 6px; text-shadow: 0 2px 0 rgba(0,0,0,0.2); }
 .stat { display: flex; align-items: center; gap: 4px; margin: 3px 0; }
 .sl { width: 38px; flex: none; }

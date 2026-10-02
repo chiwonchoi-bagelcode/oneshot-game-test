@@ -573,6 +573,8 @@ export class GameWorld {
 
   private damageFrom(e: Ent, other: Ent, J: number) {
     if (!e.alive || e.kind === 'debris') return;
+    // let freshly spawned stacks settle without breaking
+    if (this.time < 1.2) return;
     if (other.kind === 'debris') J *= 0.35;
     if (e.onHit) e.onHit(J, other);
     if (!e.breakable) return;

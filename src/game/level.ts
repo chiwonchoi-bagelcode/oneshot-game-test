@@ -212,7 +212,7 @@ export class LevelBuilder {
 
   fireworks(x: number, y: number, w = 1.4, h = 1.0, o: { radius?: number; power?: number; cause?: Cause } = {}) {
     const vis = P.fireworksCrate(w, h);
-    const e = this.w.addBox({ x, y, w, h, mat: 'wood', hp: 22, obj: vis, kind: 'fireworks', density: 0.6, flammable: true, noDebris: true });
+    const e = this.w.addBox({ x, y, w, h, mat: 'wood', hp: 10, obj: vis, kind: 'fireworks', density: 2.0, flammable: true, noDebris: true });
     e.onBreak = (_c, en) => {
       const p = (en as any)._lastPos ?? { x, y };
       const R = o.radius ?? 6;

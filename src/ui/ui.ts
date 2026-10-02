@@ -276,6 +276,7 @@ export class UI {
       ${bar('내구도', st.hull, 380, String(st.hull))}
       ${bar('선회', st.turn, 8, st.turn.toFixed(1))}
       ${bar('돌파력', st.dryMass * st.punch, 12, (st.dryMass * st.punch).toFixed(1))}
+      ${st.twr < 1.15 ? `<div class="bc-warn">⚠ 너무 무거워요! ${st.twr < 1 ? '뜨지도 못해요.' : '겨우 떠요.'} 더 강한 엔진이 필요해요</div>` : ''}
     `;
   }
 

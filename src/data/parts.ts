@@ -63,8 +63,8 @@ export const PARTS: PartDef[] = [
   {
     id: 'cooker', slot: 'body', name: '압력솥 동체', tag: '돌파형',
     desc: '할머니의 무쇠 압력솥. 엄청 무겁다!',
-    trait: '벽돌도 들이받는 탱크. 좁은 길은 못 지나가고 둔하다.',
-    mass: 4.4, cost: 700, gears: 3, hull: 360, radius: 0.56, length: 1.5, drag: 0.08, armor: 1.45,
+    trait: '벽돌도 들이받는 탱크. 좁은 길은 못 지나가고 둔하다 — 강한 엔진이 필요!',
+    mass: 3.8, cost: 700, gears: 3, hull: 360, radius: 0.56, length: 1.5, drag: 0.08, armor: 1.45,
   },
   // ------------------------------------------------------------------ ENGINE
   {

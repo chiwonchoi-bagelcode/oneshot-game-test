@@ -1,5 +1,6 @@
 import './ui/style.css';
 import { App } from './app';
+import { save } from './core/save';
 
 const container = document.getElementById('game')!;
 const loading = document.getElementById('loading');
@@ -8,6 +9,7 @@ function boot() {
   try {
     const app = new App(container);
     (window as any).__app = app;
+    (window as any).__save = save;
   } catch (e) {
     console.error(e);
     if (loading) loading.innerHTML = `<div style="padding:24px;text-align:center">앗! 이 기기에서 게임을 시작할 수 없어요.<br><small>${String(e)}</small></div>`;

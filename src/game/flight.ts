@@ -260,7 +260,7 @@ export class Flight {
   }
 
   private onRocketDeath() {
-    if (this.phase === 'success') return;
+    if (this.phase === 'success' || this.phase === 'done') return;
     this.endReason = '로켓 대파!';
     this.ui.banner('로켓 대파!', '다른 길이나 부품을 시험해보자', 'lose');
     this.kid.play('sad');
@@ -323,22 +323,21 @@ export class Flight {
 
     // ---- fixed physics
     const active = this.phase === 'boost' || this.phase === 'fly' || this.phase === 'success' || this.phase === 'fail';
-    if (active) {
-      this.acc += dt;
-      let steps = 0;
-      while (this.acc >= FIXED && steps < 5) {
-        this.acc -= FIXED;
-        steps++;
+    // the world always simulates (balloons bob, stacks settle); the rocket only once launched
+    this.acc += dt;
+    let steps = 0;
+    while (this.acc >= FIXED && steps < 5) {
+      this.acc -= FIXED;
+      steps++;
+      if (active) {
         if (!this.rocket.dead) this.rocket.step(FIXED, ctrl);
         this.world.exhaust(FIXED);
         this.softBounds();
-        this.world.step(FIXED);
       }
-      if (steps === 5) this.acc = 0;
-    } else {
-      // keep world asleep but animate fx
+      this.world.step(FIXED);
     }
-    const alpha = active ? this.acc / FIXED : 1;
+    if (steps === 5) this.acc = 0;
+    const alpha = this.acc / FIXED;
     this.world.syncVisuals(alpha, dt);
     if (!this.rocket.dead) {
       if (active) this.rocket.updateVisual(dt, alpha, this.fx);
