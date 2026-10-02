@@ -118,10 +118,17 @@ export class App {
     });
     // Android/browser back = Escape (close dialog → pause), never a silent exit mid-flight
     history.pushState({ jrr: 1 }, '');
+    // one back press = one step: close the top dialog, else pause the flight, else back to the
+    // title; on the title the browser's back is left alone so the player can leave the page
     window.addEventListener('popstate', () => {
-      if (!this.ui.handleEscape() && this.mode === 'flight' && this.flight?.canPause()) this.setPaused(true);
-      else if (!this.ui.modalOpen() && this.mode !== 'title' && this.mode !== 'flight') this.setMode('title');
-      history.pushState({ jrr: 1 }, '');
+      if (this.ui.handleEscape()) history.pushState({ jrr: 1 }, '');
+      else if (this.mode === 'flight') {
+        if (this.flight?.canPause()) this.setPaused(true);
+        history.pushState({ jrr: 1 }, '');
+      } else if (this.mode !== 'title') {
+        this.setMode('title');
+        history.pushState({ jrr: 1 }, '');
+      }
     });
     // C-125: a lost GPU context is reported and recovered instead of leaving a frozen frame
     canvas.addEventListener('webglcontextlost', (e) => {

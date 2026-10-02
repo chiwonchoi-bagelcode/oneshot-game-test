@@ -62,3 +62,33 @@ test('Q-AH-08: quitting during the escape keeps the success (no escape bonus)', 
   expect(t.save.stages.s2.escapes ?? 0).toBe(0);
   expect(t.save.coins).toBeGreaterThanOrEqual(720); // first-clear reward was paid
 });
+
+test('back button: one step at a time (dialog → screen → title), never a silent exit mid-flight', async ({ page }) => {
+  await boot(page, { save: unlocked({ coins: 5000 }) });
+  const j = J(page);
+  expect(await j.press('.title [data-a=garage]')).toBe(true);
+  await j.advance(0.05);
+  expect(await j.press('[data-act=research]')).toBe(true);
+  await j.advance(0.05);
+  expect((await j.state()).dom.confirm).toBe(true);
+  await page.goBack({ waitUntil: 'commit' }).catch(() => {});
+  await page.waitForTimeout(200);
+  let s = await j.state();
+  expect(s.dom.confirm).toBe(false);
+  expect(s.mode).toBe('garage'); // only the dialog closed
+  await page.goBack({ waitUntil: 'commit' }).catch(() => {});
+  await page.waitForTimeout(200);
+  s = await j.state();
+  expect(s.mode).toBe('title');
+  // in flight, back pauses instead of leaving
+  expect(await j.press('.title [data-a=play]')).toBe(true);
+  await j.advance(0.05);
+  expect(await j.press('.stage-card.c0')).toBe(true);
+  await j.launch(true);
+  await j.advance(2);
+  await page.goBack({ waitUntil: 'commit' }).catch(() => {});
+  await page.waitForTimeout(200);
+  s = await j.state();
+  expect(s.mode).toBe('flight');
+  expect(s.paused).toBe(true);
+});

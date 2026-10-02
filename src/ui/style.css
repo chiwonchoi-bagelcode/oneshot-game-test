@@ -57,7 +57,7 @@ body {
 }
 .btn:active { transform: translateY(3px) scale(0.97); box-shadow: 0 1px 0 rgba(60,35,15,0.35), 0 3px 8px rgba(60,35,15,0.2); }
 .btn.big { font-size: 26px; padding: 14px 30px; }
-.btn.small { font-size: 14px; padding: 6px 10px; border-width: 3px; border-radius: 12px; }
+.btn.small { font-size: 14px; padding: 6px 10px; border-width: 3px; border-radius: 12px; min-height: 48px; min-width: 48px; }
 .btn.small::after { inset: 2px; border-radius: 8px; }
 .btn.yellow { background-color: var(--yellow); }
 .btn.blue { background-color: #6aaeff; color: #fff; text-shadow: 0 2px 0 rgba(0,0,0,0.2); }
