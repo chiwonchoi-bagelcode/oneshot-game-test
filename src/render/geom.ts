@@ -1,0 +1,120 @@
+import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+
+/** Recompute UVs as a box projection in world-ish units (uv = position * scale). */
+export function boxUV(geo: THREE.BufferGeometry, scale: number, offset = new THREE.Vector3()) {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+  const nor = geo.getAttribute('normal') as THREE.BufferAttribute;
+  const uv = new Float32Array(pos.count * 2);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) + offset.x;
+    const y = pos.getY(i) + offset.y;
+    const z = pos.getZ(i) + offset.z;
+    const nx = Math.abs(nor.getX(i));
+    const ny = Math.abs(nor.getY(i));
+    const nz = Math.abs(nor.getZ(i));
+    let u: number;
+    let v: number;
+    if (nz >= nx && nz >= ny) {
+      u = x;
+      v = y;
+    } else if (nx >= ny) {
+      u = z;
+      v = y;
+    } else {
+      u = x;
+      v = z;
+    }
+    uv[i * 2] = u * scale;
+    uv[i * 2 + 1] = v * scale;
+  }
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return geo;
+}
+
+const rbCache = new Map<string, THREE.BufferGeometry>();
+export function roundedBox(w: number, h: number, d: number, r = 0.08, uvScale = 0.5, seg = 2) {
+  const key = [w, h, d, r, uvScale, seg].map((n) => n.toFixed(3)).join('|');
+  let g = rbCache.get(key);
+  if (!g) {
+    const rr = Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001);
+    g = new RoundedBoxGeometry(w, h, d, seg, Math.max(0.001, rr));
+    boxUV(g, uvScale);
+    rbCache.set(key, g);
+  }
+  return g;
+}
+
+/** Extrude a 2D polygon (x,y pairs) to depth centered on z=0, with a soft bevel. */
+export function extrudePoly(pts: { x: number; y: number }[], depth: number, bevel = 0.2, uvScale = 0.25, curveSegs = 2) {
+  const shape = new THREE.Shape(pts.map((p) => new THREE.Vector2(p.x, p.y)));
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: depth - bevel * 2,
+    bevelEnabled: bevel > 0,
+    bevelThickness: bevel,
+    bevelSize: bevel * 0.9,
+    bevelSegments: curveSegs,
+    curveSegments: 6,
+  });
+  geo.translate(0, 0, -(depth - bevel * 2) / 2);
+  geo.computeVertexNormals();
+  boxUV(geo, uvScale);
+  return geo;
+}
+
+export function extrudeShape(shape: THREE.Shape, depth: number, bevel = 0.05, uvScale = 1, curveSegments = 12) {
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: Math.max(0.001, depth - bevel * 2),
+    bevelEnabled: bevel > 0,
+    bevelThickness: bevel,
+    bevelSize: bevel * 0.9,
+    bevelSegments: 2,
+    curveSegments,
+  });
+  geo.translate(0, 0, -(depth - bevel * 2) / 2);
+  geo.computeVertexNormals();
+  boxUV(geo, uvScale);
+  return geo;
+}
+
+export function lathe(profile: [number, number][], segs = 24) {
+  return new THREE.LatheGeometry(
+    profile.map(([r, y]) => new THREE.Vector2(r, y)),
+    segs,
+  );
+}
+
+export function merge(geos: THREE.BufferGeometry[]) {
+  // Normalise attributes so mergeGeometries doesn't complain.
+  const prepared = geos.map((g) => {
+    let gg = g.index ? g.toNonIndexed() : g.clone();
+    if (!gg.getAttribute('uv')) {
+      gg.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(gg.getAttribute('position').count * 2), 2));
+    }
+    for (const k of Object.keys(gg.attributes)) if (!['position', 'normal', 'uv'].includes(k)) gg.deleteAttribute(k);
+    return gg;
+  });
+  return mergeGeometries(prepared, false)!;
+}
+
+/** Star / gear outline shape. */
+export function gearShape(teeth: number, rOuter: number, rInner: number, hole = 0) {
+  const s = new THREE.Shape();
+  const n = teeth * 4;
+  for (let i = 0; i <= n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const k = i % 4;
+    const r = k === 1 || k === 2 ? rOuter : rInner;
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    if (i === 0) s.moveTo(x, y);
+    else s.lineTo(x, y);
+  }
+  if (hole > 0) {
+    const h = new THREE.Path();
+    h.absarc(0, 0, hole, 0, Math.PI * 2, true);
+    s.holes.push(h);
+  }
+  return s;
+}

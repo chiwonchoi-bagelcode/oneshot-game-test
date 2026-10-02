@@ -1,0 +1,12 @@
+export const ICON = {
+  cap: `<svg viewBox="0 0 32 32" class="ico"><g><circle cx="16" cy="16" r="13" fill="#e9c84a"/><circle cx="16" cy="16" r="13" fill="none" stroke="#b8902a" stroke-width="3" stroke-dasharray="2.2 2.1"/><circle cx="16" cy="16" r="8.5" fill="#f6dd7a"/><text x="16" y="20.5" font-size="11" text-anchor="middle" fill="#b8302a" font-family="Jua,sans-serif">C</text></g></svg>`,
+  gear: `<svg viewBox="0 0 32 32" class="ico"><path fill="#ffcc33" stroke="#b8902a" stroke-width="1.5" d="M13.5 2h5l.8 3.6 2.6 1.1 3.2-2 3.5 3.5-2 3.2 1.1 2.6 3.6.8v5l-3.6.8-1.1 2.6 2 3.2-3.5 3.5-3.2-2-2.6 1.1-.8 3.6h-5l-.8-3.6-2.6-1.1-3.2 2-3.5-3.5 2-3.2-1.1-2.6L2 18.5v-5l3.6-.8 1.1-2.6-2-3.2 3.5-3.5 3.2 2 2.6-1.1z"/><circle cx="16" cy="16" r="4.5" fill="#fff4c0" stroke="#b8902a" stroke-width="1.5"/></svg>`,
+  fuel: `<svg viewBox="0 0 32 32" class="ico"><rect x="6" y="9" width="20" height="20" rx="3" fill="#fff" stroke="#3d8be8" stroke-width="2"/><path d="M6 12 L16 3 L26 12" fill="#fff" stroke="#3d8be8" stroke-width="2"/><rect x="6" y="20" width="20" height="9" rx="2" fill="#3d8be8"/></svg>`,
+  hull: `<svg viewBox="0 0 32 32" class="ico"><path d="M16 3 L27 8 V16 C27 23 21 28 16 30 C11 28 5 23 5 16 V8 Z" fill="#e8553d" stroke="#8a2a1a" stroke-width="2"/><path d="M11 16 l4 4 7-8" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>`,
+  pause: `<svg viewBox="0 0 32 32" class="ico"><rect x="8" y="7" width="5.5" height="18" rx="2" fill="#5a3a20"/><rect x="18.5" y="7" width="5.5" height="18" rx="2" fill="#5a3a20"/></svg>`,
+  back: `<svg viewBox="0 0 32 32" class="ico"><path d="M20 6 L9 16 L20 26" fill="none" stroke="#5a3a20" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  lock: `<svg viewBox="0 0 32 32" class="ico"><rect x="7" y="14" width="18" height="14" rx="3" fill="#8a7a6a"/><path d="M11 14 V10 a5 5 0 0 1 10 0 V14" fill="none" stroke="#8a7a6a" stroke-width="3"/></svg>`,
+  target: `<svg viewBox="0 0 32 32" class="ico"><circle cx="16" cy="16" r="13" fill="#fff" stroke="#e8553d" stroke-width="3"/><circle cx="16" cy="16" r="8" fill="#e8553d"/><circle cx="16" cy="16" r="3.5" fill="#fff"/></svg>`,
+  alt: `<svg viewBox="0 0 32 32" class="ico"><path d="M16 3 L22 14 H18 V29 H14 V14 H10 Z" fill="#3b8cff"/></svg>`,
+  finger: `<svg viewBox="0 0 48 48" class="ico"><circle cx="24" cy="24" r="16" fill="rgba(255,255,255,0.85)" stroke="#5a3a20" stroke-width="3"/><circle cx="24" cy="24" r="6" fill="#ffd23f"/></svg>`,
+};
