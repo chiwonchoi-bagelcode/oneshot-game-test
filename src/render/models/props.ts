@@ -560,6 +560,15 @@ export function hydrant() {
   return g;
 }
 
+let fwMat: THREE.MeshStandardMaterial | null = null;
+function fwRocketMat() {
+  if (!fwMat) {
+    fwMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4 });
+    fwMat.userData.shared = true;
+  }
+  return fwMat;
+}
+
 export function fireworksCrate(w: number, h: number) {
   const g = new THREE.Group();
   const box = mesh(roundedBox(w, h, 1.2, 0.06, 0.6), woodMat('#b07040'));
@@ -568,8 +577,12 @@ export function fireworksCrate(w: number, h: number) {
   lab.position.z = 0.61;
   g.add(lab);
   const cols = ['#e8443a', '#3a6fe8', '#3aa85a', '#f6d23a', '#b84ae8'];
+  // one vertex-coloured material for all five rockets (one draw call after merging)
   for (let i = 0; i < 5; i++) {
-    const r = mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.7, 10), plastic(cols[i], 0.4));
+    const geo = new THREE.CylinderGeometry(0.08, 0.08, 0.7, 10);
+    const c = new THREE.Color(cols[i]).convertSRGBToLinear();
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: geo.attributes.position.count }, () => [c.r, c.g, c.b]).flat(), 3));
+    const r = mesh(geo, fwRocketMat());
     r.position.set(-w / 2 + 0.2 + i * ((w - 0.4) / 4), h / 2 + 0.3, 0);
     r.rotation.z = (i - 2) * 0.12;
     g.add(r);
@@ -584,18 +597,22 @@ export function fireworksCrate(w: number, h: number) {
   return g;
 }
 
+const balloonMats = new Map<string, THREE.MeshPhysicalMaterial>();
 export function balloon(color: string) {
   const g = new THREE.Group();
-  const b = mesh(new THREE.SphereGeometry(0.55, 20, 16), new THREE.MeshPhysicalMaterial({ color, roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.1 }));
+  // one material per colour, shared; the clearcoat gives the highlight (1 draw call per balloon)
+  let mat = balloonMats.get(color);
+  if (!mat) {
+    mat = new THREE.MeshPhysicalMaterial({ color, roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.1 });
+    mat.userData.shared = true;
+    balloonMats.set(color, mat);
+  }
+  const b = mesh(new THREE.SphereGeometry(0.55, 20, 16), mat);
   b.scale.y = 1.15;
   g.add(b);
-  const knot = mesh(new THREE.ConeGeometry(0.08, 0.14, 8), plastic(color, 0.4));
+  const knot = mesh(new THREE.ConeGeometry(0.08, 0.14, 8), mat);
   knot.position.y = -0.66;
   g.add(knot);
-  const hl = mesh(new THREE.SphereGeometry(0.12, 8, 8), plastic('#ffffff', 0.1), false, false);
-  hl.scale.set(0.6, 1, 0.3);
-  hl.position.set(-0.2, 0.25, 0.45);
-  g.add(hl);
   return g;
 }
 

@@ -93,7 +93,7 @@ export class LevelBuilder {
       });
     }
     // Q-PF-04: every prop model becomes one mesh per material (after stage code tweaked parts)
-    for (const e of this.w.ents) if (e.obj && e.kind !== 'rocket' && !e.obj.userData.noMerge) mergeByMaterial(e.obj);
+    for (const e of this.w.ents) if (e.obj && e.kind !== 'rocket' && !e.obj.userData.noMerge) mergeByMaterial(e.obj, 2);
     // Q-PF-08: small props don't cast shadows (contact readability comes from the outline)
     for (const e of this.w.ents) {
       if (!e.obj || e.isTarget || e.kind === 'rocket' || e.w * e.h >= 2.5) continue;

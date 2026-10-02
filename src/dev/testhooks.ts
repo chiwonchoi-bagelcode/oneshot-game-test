@@ -226,6 +226,17 @@ export function installTestHooks(app: App) {
       broken: f?.world.stats.broken ?? 0,
       bodies: f ? f.world.pw.getBodyCount() : 0,
       planeAudit: f ? f.builder.planeAudit.slice() : [],
+      mem: {
+        geometries: app.renderer.renderer.info.memory.geometries,
+        textures: app.renderer.renderer.info.memory.textures,
+        programs: app.renderer.renderer.info.programs?.length ?? 0,
+        heap: (performance as any).memory?.usedJSHeapSize ?? 0,
+        sceneObjects: (() => {
+          let n = 0;
+          (f?.scene ?? app.garage.scene).traverse(() => n++);
+          return n;
+        })(),
+      },
       save: JSON.parse(JSON.stringify(save)),
       loadStatus,
       loadProblems: loadProblems.slice(),
