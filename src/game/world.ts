@@ -921,7 +921,17 @@ export class GameWorld {
   }
 
   spawnDebris(x: number, y: number, w: number, h: number, ang: number, mat: string, vx: number, vy: number, depth = 1) {
+    // at the budget the oldest pieces shrink away over 0.3 s instead of popping out; only a hard
+    // overshoot (+12) removes instantly
     if (this.debris.length >= BUDGET.debris) {
+      for (const d of this.debris) {
+        if ((d.maxLife ?? 0) - (d.life ?? 0) > 0.3) {
+          d.maxLife = (d.life ?? 0) + 0.3;
+          break;
+        }
+      }
+    }
+    if (this.debris.length >= BUDGET.debris + 12) {
       const old = this.debris.shift()!;
       this.removeEnt(old);
     }
