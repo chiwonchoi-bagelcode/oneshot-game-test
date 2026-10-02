@@ -7,6 +7,8 @@ import { GRAVITY, RocketStats } from '../data/parts';
 import { audio } from '../core/audio';
 import { clamp, distPointSeg, len, rand, wrapAngle } from '../core/math';
 import { disposeTree } from '../render/geom';
+import { windAccel } from './wind';
+import { ContactRole, contactOutline, setCracks, terrainOutline, animateContact } from '../render/contact';
 import { shiny } from '../render/materials';
 
 const Vec2 = planck.Vec2;
@@ -57,6 +59,9 @@ export interface Ent {
   pa: number;
   // misc
   data?: any;
+  /** Q-CI role override (e.g. 'device' for valves/fireworks); default from breakable */
+  role?: ContactRole;
+  crackLv?: number;
   /** cause hint inherited from a chain reaction (explosion, device, water, fire) */
   hint?: Cause;
   hintT?: number;
@@ -232,6 +237,7 @@ export class GameWorld {
 
   register(e: Ent) {
     this.ents.push(e);
+    this.attachContact(e);
     if (e.body) {
       const p = e.body.getPosition();
       e.px = p.x;
@@ -242,8 +248,27 @@ export class GameWorld {
     return e;
   }
 
+  /** Q-CI: everything the rocket can hit carries an outline drawn exactly on its collider. */
+  private attachContact(e: Ent) {
+    if (!e.obj || !e.body) return;
+    if (e.kind === 'debris' || e.kind === 'water' || e.kind === 'rocket' || e.kind === 'terrain') return;
+    const f = e.body.getFixtureList();
+    if (!f || f.isSensor()) return;
+    if (e.obj.getObjectByName('contact')) return;
+    const role: ContactRole = e.role ?? (e.breakable ? 'breakable' : 'solid');
+    e.obj.add(contactOutline({ w: e.w, h: e.h, round: e.round }, role, e.depth / 2 + 0.03));
+  }
+
+  /** Change an entity's role after creation (builder helpers mark devices). */
+  setRole(e: Ent, role: ContactRole) {
+    e.role = role;
+    const old = e.obj?.getObjectByName('contact');
+    if (old) old.parent!.remove(old);
+    this.attachContact(e);
+  }
+
   /** Static terrain polygon (any shape) as a chain loop. */
-  addTerrain(pts: { x: number; y: number }[], mat: string, obj: THREE.Object3D | null) {
+  addTerrain(pts: { x: number; y: number }[], mat: string, obj: THREE.Object3D | null, o: { depth?: number; z?: number } = {}) {
     const e = this.baseEnt('terrain', mat, 0, 0);
     const body = this.pw.createBody({ type: 'static' });
     const info = matInfo(mat);
@@ -257,16 +282,18 @@ export class GameWorld {
     body.setUserData(e);
     e.body = body;
     e.obj = obj;
+    if (obj) obj.add(terrainOutline(pts, (o.z ?? 0) + (o.depth ?? 4) / 2 + 0.03));
     return this.register(e);
   }
 
   addBox(o: {
     x: number; y: number; w: number; h: number; angle?: number; mat: string; static?: boolean; hp?: number; breakable?: boolean;
     depth?: number; obj?: THREE.Object3D | null; kind?: string; density?: number; friction?: number; restitution?: number; name?: string;
-    flammable?: boolean; noDebris?: boolean; coins?: number; bullet?: boolean; linearDamping?: number; angularDamping?: number;
+    flammable?: boolean; noDebris?: boolean; coins?: number; bullet?: boolean; linearDamping?: number; angularDamping?: number; role?: ContactRole;
   }): Ent {
     const info = matInfo(o.mat);
     const e = this.baseEnt(o.kind ?? 'block', o.mat, o.w, o.h);
+    e.role = o.role;
     e.name = o.name;
     e.depth = o.depth ?? Math.min(2.2, Math.max(1.0, Math.min(o.w, o.h) * 1.2 + 0.6));
     e.isStatic = !!o.static;
@@ -305,10 +332,11 @@ export class GameWorld {
   addCircle(o: {
     x: number; y: number; r: number; mat: string; static?: boolean; hp?: number; breakable?: boolean; obj?: THREE.Object3D | null; kind?: string;
     density?: number; friction?: number; restitution?: number; name?: string; flammable?: boolean; noDebris?: boolean; coins?: number;
-    linearDamping?: number; angularDamping?: number; gravityScale?: number; sensor?: boolean;
+    linearDamping?: number; angularDamping?: number; gravityScale?: number; sensor?: boolean; role?: ContactRole;
   }): Ent {
     const info = matInfo(o.mat);
     const e = this.baseEnt(o.kind ?? 'round', o.mat, o.r * 2, o.r * 2);
+    e.role = o.role;
     e.name = o.name;
     e.round = true;
     e.isStatic = !!o.static;
@@ -1111,17 +1139,11 @@ export class GameWorld {
         const e = b.getUserData() as Ent;
         if (!e || done.has(b)) return true;
         const p = b.getWorldCenter();
-        const dx = p.x - z.x;
-        const dy = p.y - z.y;
-        const along = dx * ca + dy * sa;
-        const across = -dx * sa + dy * ca;
-        if (along < 0 || along > z.len || Math.abs(across) > z.wid / 2) return true;
+        const a = windAccel(z, p.x, p.y, e.kind);
+        if (!a) return true;
         done.add(b);
-        const fall = (1 - along / z.len) * 0.6 + 0.4;
         const m = b.getMass();
-        const acc = z.power * fall * (e.kind === 'rocket' ? 1 : e.kind === 'water' ? 0.4 : 0.7);
-        // counteract gravity a bit more for vertical updrafts
-        b.applyForceToCenter(Vec2(ca * acc * m, sa * acc * m), true);
+        b.applyForceToCenter(Vec2(a.x * m, a.y * m), true);
         return true;
       });
     }
@@ -1328,7 +1350,17 @@ export class GameWorld {
 
   // ================================================================== visuals
   syncVisuals(alpha: number, dtFrame: number) {
+    animateContact(this.time);
     for (const e of this.ents) {
+      // damage states: cracks appear as a breakable loses hp (Q-CI-02)
+      if (e.breakable && e.obj && e.alive && !e.round && e.maxHp < 9999) {
+        const r = e.hp / e.maxHp;
+        const lv = r < 0.34 ? 2 : r < 0.7 ? 1 : 0;
+        if (lv !== (e.crackLv ?? 0)) {
+          e.crackLv = lv;
+          setCracks(e.obj, e.w, e.h, e.depth / 2 + 0.03, lv as 0 | 1 | 2);
+        }
+      }
       if (!e.body || !e.obj || e.isStatic) continue;
       const p = e.body.getPosition();
       const a = e.body.getAngle();

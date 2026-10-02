@@ -82,6 +82,8 @@ export function installTestHooks(app: App) {
   const press = (selector: string) => {
     const elm = app.container.querySelector(selector) as HTMLElement | null;
     if (!elm) return false;
+    // a player scrolls a list to reach an item; never scrolls a covered button into reach
+    elm.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     const r = elm.getBoundingClientRect();
     const c = rect();
     const x = r.left + r.width / 2 - c.left;
@@ -90,7 +92,7 @@ export function installTestHooks(app: App) {
     if (!hit || !(hit === elm || elm.contains(hit))) return false; // covered or hidden: a player couldn't press it
     fire('pointerdown', x, y, hit);
     fire('pointerup', x, y, hit);
-    (hit as HTMLElement).click();
+    hit.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
     return true;
   };
 
@@ -189,9 +191,29 @@ export function installTestHooks(app: App) {
       rocket: r ? { dead: r.dead, x: p ? +p.x.toFixed(2) : null, y: p ? +p.y.toFixed(2) : null, vx: v ? +v.x.toFixed(2) : null, vy: v ? +v.y.toFixed(2) : null, fuel: +r.fuel.toFixed(1), hull: +r.hull.toFixed(1), throttle: +r.throttle.toFixed(2) } : null,
       targetAlive: f ? !!f.world.targetEnt?.alive : null,
       target: f?.world.targetEnt?.body ? { x: +f.world.targetEnt.body.getPosition().x.toFixed(2), y: +f.world.targetEnt.body.getPosition().y.toFixed(2) } : null,
-      cause: f ? (f as any).targetCause ?? null : null,
+      cause: f ? f.targetCause ?? null : null,
+      perfect: f?.perfect ?? false,
+      tappedEarly: f?.tappedEarly ?? false,
+      emptyT: f ? +(f as any).emptyT.toFixed(2) : 0,
+      settleT: f ? +(f as any).settleT.toFixed(2) : 0,
+      runCoins: f?.runCoins ?? 0,
+      gearsGot: f ? f.gearsGot.slice() : [],
+      gearsAgain: f?.gearsAgain ?? 0,
+      result: f?.result ? { success: f.result.success, cause: f.result.cause, total: f.result.total, paid: f.result.paid, reason: f.result.reason, escaped: f.result.escaped } : null,
+      pickups: f ? f.world.pickups.map((p) => ({ kind: p.kind, id: p.id ?? null, x: +p.x.toFixed(2), y: +p.y.toFixed(2), taken: p.taken, owned: !!p.owned })) : [],
+      dom: {
+        pause: !!app.container.querySelector('.overlay.pause.on'),
+        result: !!app.container.querySelector('.overlay.result.on'),
+        settings: !!app.container.querySelector('.overlay.settings.on'),
+        confirm: !!app.container.querySelector('.overlay.confirm.on'),
+        ringHot: !!app.container.querySelector('.timing-ring.on.hot'),
+        ringOn: !!app.container.querySelector('.timing-ring.on'),
+        toast: (app.container.querySelector('.toast.on') as HTMLElement | null)?.innerText ?? null,
+        focus: (document.activeElement as HTMLElement | null)?.getAttribute('data-a') ?? document.activeElement?.className ?? null,
+      },
       broken: f?.world.stats.broken ?? 0,
       bodies: f ? f.world.pw.getBodyCount() : 0,
+      planeAudit: f ? f.builder.planeAudit.slice() : [],
       save: JSON.parse(JSON.stringify(save)),
       loadStatus,
       loadProblems: loadProblems.slice(),

@@ -181,7 +181,7 @@ export class Flight {
     this.world = new GameWorld(levelGroup, this.fx, events);
     this.builder = new LevelBuilder(this.world, levelGroup);
     stage.build(this.builder);
-    this.builder.finalize();
+    this.builder.finalize(stage.fog[0]);
     this.world.bounds = stage.bounds;
     const T = this.world.targetEnt!;
     const tp = T.body!.getPosition();
@@ -198,8 +198,9 @@ export class Flight {
     crates.position.set(L.x + 5.6, L.y, 0);
     crates.traverse((o) => ((o as THREE.Mesh).isMesh ? ((o.castShadow = true), (o.receiveShadow = true)) : 0));
     sc.add(crates);
-    this.world.addCircle({ x: L.x, y: L.y + 0.42, r: 0.42, mat: 'fabric', static: true, breakable: false, obj: null });
-    this.world.addBox({ x: L.x + 5.6, y: L.y + 2.1, w: 1.5, h: 4.2, mat: 'cardboard', static: true, breakable: false, obj: null });
+    // empty visuals: the seesaw/crate models are drawn separately; these carry the Q-CI outline
+    this.world.addCircle({ x: L.x, y: L.y + 0.42, r: 0.42, mat: 'fabric', static: true, breakable: false, obj: new THREE.Group() });
+    this.world.addBox({ x: L.x + 5.6, y: L.y + 2.1, w: 1.5, h: 4.2, mat: 'cardboard', static: true, breakable: false, obj: new THREE.Group(), depth: 1.6 });
     this.kid.root.position.set(L.x + 5.6, L.y + 4.3, 0);
     this.kid.hips.rotation.y = -0.9;
     sc.add(this.kid.root);
@@ -893,6 +894,25 @@ export class Flight {
       const widthWanted = 10.5 + clamp(sp - 6, 0, 24) * 0.16;
       c.vh = clamp(widthWanted / Math.max(0.3, aspect), 17, 30);
       if (this.phase === 'boost') c.vh = Math.max(c.vh, 22);
+      // Q-AH-03: approaching a private interior widens the shot so the lit windows and the
+      // ways in are discovered before the rocket is at the wall
+      const z = this.stage.escapeZone;
+      if (z) {
+        const nx = clamp(p.x, z.minX, z.maxX);
+        const ny = clamp(p.y, z.minY, z.maxY);
+        const d = len(p.x - nx, p.y - ny);
+        if (d > 0 && d < 20) {
+          // frame the rocket together with the first few metres of the house
+          const k = Math.min(1, (1 - d / 20) * 1.6);
+          const fx = nx + Math.sign(nx - p.x || 1) * 5;
+          const fy = ny + Math.sign(ny - p.y) * 3;
+          c.tx = lerp(c.tx, (p.x + fx) / 2, k);
+          c.ty = lerp(c.ty, (p.y + fy) / 2 + 1, k * 0.6);
+          const wantW = Math.abs(fx - p.x) + 7;
+          const wantH = Math.abs(fy - p.y) + 9;
+          c.vh = Math.max(c.vh, lerp(c.vh, clamp(Math.max(wantH, wantW / Math.max(0.3, aspect)), 17, 34), k));
+        } else if (d === 0) c.vh = Math.max(c.vh, 19);
+      }
       // just after the target falls, frame it together with the rocket briefly
       if (this.phase === 'escape' && this.phaseT < 1.2) {
         c.tx = lerp(c.tx, this.targetPos.x, 0.35);

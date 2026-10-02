@@ -255,3 +255,37 @@ export function flightCheck(s: RocketStats): { ok: boolean; reason: string; fix:
     };
   return { ok: true, reason: '', fix: '' };
 }
+
+/** All 324 combinations (5 slots), in slot order. */
+export function allLoadouts(): Loadout[] {
+  const by = SLOTS.map((s) => PARTS.filter((p) => p.slot === s.id).map((p) => p.id));
+  const out: Loadout[] = [];
+  for (const body of by[0]) for (const engine of by[1]) for (const tank of by[2]) for (const nose of by[3]) for (const fins of by[4]) out.push({ body, engine, tank, nose, fins });
+  return out;
+}
+
+/**
+ * Smallest change that makes an un-flyable build fly, using only owned parts:
+ * first a stronger owned engine, otherwise swap the heaviest optional parts for the lightest
+ * owned ones (tank → nose → fins → body). The free starter parts are always owned and the
+ * starter build flies, so this always terminates with a legal build.
+ */
+export function autoFixLoadout(l: Loadout, owned: Record<string, true>): { loadout: Loadout; changed: string[] } {
+  const cur: Loadout = { ...l };
+  const changed: string[] = [];
+  if (flightCheck(computeStats(cur)).ok) return { loadout: cur, changed };
+  const engines = PARTS.filter((p) => p.slot === 'engine' && owned[p.id]).sort((a, b) => a.mass - b.mass);
+  for (const e of engines) {
+    const t = { ...cur, engine: e.id };
+    if (flightCheck(computeStats(t)).ok) return { loadout: t, changed: [e.id] };
+  }
+  for (const slot of ['tank', 'nose', 'fins', 'body'] as Slot[]) {
+    const lightest = PARTS.filter((p) => p.slot === slot && owned[p.id]).sort((a, b) => a.mass - b.mass)[0];
+    if (lightest && lightest.id !== cur[slot]) {
+      cur[slot] = lightest.id;
+      changed.push(lightest.id);
+      if (flightCheck(computeStats(cur)).ok) return { loadout: cur, changed };
+    }
+  }
+  return { loadout: { ...DEFAULT_LOADOUT }, changed: ['default'] };
+}

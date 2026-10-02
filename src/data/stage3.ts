@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { contactOutline } from '../render/contact';
 import * as planck from 'planck';
 import { LevelBuilder, StageDef } from '../game/level';
 import { Ent } from '../game/world';
@@ -32,14 +33,14 @@ export const stage3: StageDef = {
   build(b: LevelBuilder) {
     b.launch = { x: 0, y: 0 };
     b.ground([{ x: -120, y: -25 }, { x: 175, y: -25 }, { x: 175, y: 0 }, { x: -120, y: 0 }]);
-    b.sign(7, 0, '축제 한마당!\n비행선 ↑ 저 위', -1.4, 2.8, 1.2);
+    b.sign(7, 0, '축제 한마당!\n비행선 ↑ 저 위', -1.7, 2.8, 1.2);
 
     // ------------------------------------------------------------ bouncy castle + balloon cart near launch
     b.spring(-12, 0.45, 5, 0, 24);
     b.put(bouncyCastle(), -12, 0, -2.4);
     const cols = ['#ff4d6d', '#ffd23f', '#4dd2ff', '#7dff6a', '#a35bff', '#ff8a2a'];
     for (let i = 0; i < 6; i++) b.balloonAnchored(11 + (i % 3) * 1.3, 6 + Math.floor(i / 3) * 1.6 + (i % 2) * 0.5, 12, 1.6, cols[i], 2);
-    b.put(balloonCart(), 12, 0, 0);
+    b.put(balloonCart(), 12, 0, -1.8);
 
     // ------------------------------------------------------------ ferris wheel (rotating spokes + moving gondolas)
     const WX = -42;
@@ -49,6 +50,9 @@ export const stage3: StageDef = {
     const wheelVis = ferrisWheel(WR);
     wheelVis.position.set(WX, WY, -1.5);
     wheelVis.userData.dynamic = true;
+    // the spokes are solid (kinematic collider): in-plane, crisp, outlined like every collider (Q-CI)
+    wheelVis.userData.inPlane = true;
+    wheelVis.userData.noHaze = true;
     b.deco.add(wheelVis);
     const legs = new THREE.Group();
     for (const s of [-1, 1]) {
@@ -67,6 +71,16 @@ export const stage3: StageDef = {
       spokeBody.createFixture({ shape: new planck.Box((WR - rIn) / 2, 0.25, Vec2(Math.cos(a) * rm, Math.sin(a) * rm), a), friction: 0.4, restitution: 0.3, filterCategoryBits: 1 });
     }
     spokeBody.setAngularVelocity(omega);
+    const spinG = wheelVis.getObjectByName('spin')!;
+    for (let i = 0; i < 8; i++) {
+      const a = (i * Math.PI) / 4;
+      const rm = (WR + rIn) / 2;
+      const o = contactOutline({ w: WR - rIn, h: 0.5 }, 'solid', 1.5 + 0.35);
+      o.position.x = Math.cos(a) * rm;
+      o.position.y = Math.sin(a) * rm;
+      o.rotation.z = a;
+      spinG.add(o);
+    }
     const spokeEnt: Ent = {
       id: 9000, kind: 'wheel', body: spokeBody, obj: null, mat: 'metal', w: 1, h: 1, depth: 1, hp: 9999, maxHp: 9999, breakable: false, alive: true,
       isStatic: true, flammable: false, heat: 0, burning: false, burnT: 0, soak: 0, soakMax: 0, px: WX, py: WY, pa: 0,
@@ -84,6 +98,11 @@ export const stage3: StageDef = {
       b.w.ents.push(ge);
       const obj = gondola(cols[i % cols.length]);
       obj.userData.dynamic = true;
+      obj.userData.inPlane = true;
+      obj.userData.noHaze = true;
+      const go = contactOutline({ w: 2.6, h: 0.5 }, 'solid', 0.9);
+      go.position.y = -0.8;
+      obj.add(go);
       b.deco.add(obj);
       gondolas.push({ body: gb, a0, obj });
     }
@@ -107,7 +126,7 @@ export const stage3: StageDef = {
     });
     b.gear('s3_wheel', WX, WY);
     b.coinArc(WX, WY, 2.2, 0, Math.PI * 2 * 0.86, 7);
-    b.put(P.signPost('관람차\n(가운데에 보물!)', 2.4, 1.1), WX + 14, 0, -1.2);
+    b.sign(WX + 14, 0, '관람차\n(가운데에 보물!)', -1.7, 2.4, 1.1);
 
     // ------------------------------------------------------------ carnival tent with a gear
     // left wall stops above the door flap so breaking the flap really opens a way in (R-05)
@@ -134,10 +153,10 @@ export const stage3: StageDef = {
     b.slab(TX, 50, 2.2, 100, 'redmetal', { depth: 2.2 });
     for (let y = 12; y < 100; y += 16) b.slab(TX, y, 6, 0.4, 'metal', { angle: 0.6, depth: 1 });
     b.slab(TX, 100.4, 9, 0.8, 'metal', { depth: 3 });
-    b.put(antenna(), TX, 100.8, 0);
+    b.put(antenna(), TX, 100.8, -1.8);
     b.gear('s3_tower', TX - 3, 102);
     b.fuel(TX + 3, 102.2);
-    b.put(P.signPost('방송탑 — 비행선 계류장', 2.6, 1.0), TX + 5, 0, -1.4);
+    b.sign(TX + 5, 0, '방송탑 — 비행선 계류장', -1.7, 2.6, 1.0);
 
     const BX = TX;
     const BY = 132;
@@ -222,9 +241,9 @@ export const stage3: StageDef = {
     const cannonVis = cannon();
     const aim = Math.atan2(BY - CY - 0.5, BX - CX);
     cannonVis.rotation.z = aim - Math.PI / 2;
-    b.put(cannonVis, CX, CY, 0);
-    const button = b.block(CX + 2.6, 7.0, 0.9, 0.5, 'redmetal', { static: true, hp: 1, breakable: true, noDebris: true, obj: bigButton() });
-    b.put(P.signPost('절대 누르지\n마시오!!', 2.2, 1.0), CX - 1.2, 6.4, -1.4);
+    b.put(cannonVis, CX, CY, -1.8);
+    const button = b.block(CX + 2.6, 7.0, 0.9, 0.5, 'redmetal', { static: true, hp: 1, breakable: true, noDebris: true, obj: bigButton(), role: 'device' });
+    b.sign(CX - 1.2, 6.4, '절대 누르지\n마시오!!', -1.7, 2.2, 1.0);
     let fired = false;
     const fire = () => {
       if (fired) return;
@@ -287,16 +306,16 @@ export const stage3: StageDef = {
     b.coinArc(-50, 166, 8, Math.PI * 0.1, Math.PI * 0.9, 7);
     // jet stream (pushes right)
     b.w.addWind({ x: -95, y: 196, ang: 0, len: 260, wid: 22, power: 7, active: true });
-    b.put(P.signPost('→ 제트기류 →', 2.4, 1.0), -48, 166.2, -1.2);
+    b.sign(-48, 166.2, '→ 제트기류 →', -1.7, 2.4, 1.0);
     // floating lanterns as coin trail upwards
     for (let i = 0; i < 6; i++) {
       const lx = 100 + Math.sin(i) * 6;
       const ly = 60 + i * 16;
-      b.put(lantern(), lx, ly, -0.8);
+      b.put(lantern(), lx, ly, -1.8);
       b.coin(lx, ly - 1.5);
     }
     // space satellite with gear
-    b.put(satellite(), 112, 258, -1);
+    b.put(satellite(), 112, 258, -1.8);
     b.gear('s3_space', 108, 254);
     b.coinLine(100, 225, 110, 248, 5);
     // backdrop

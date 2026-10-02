@@ -112,7 +112,7 @@ export const stage1: StageDef = {
     b.slab(-98, 1.6, 0.5, 3.2, 'wood', { breakable: true, hp: 40, depth: 2 });
     b.slab(-95, 3.45, 7, 0.5, 'wood', { breakable: true, hp: 40, depth: 2 });
     b.slab(-92, 2.35, 0.5, 1.7, 'wood', { breakable: true, hp: 40, depth: 2 });
-    b.put(new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.5), texMat('dogsign', signTexture('멍멍이 집', '#fff', '#d24a3a', 256, 96), 0.7)), -95, 4.3, 1.05);
+    b.putInPlane(new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.5), texMat('dogsign', signTexture('멍멍이 집', '#fff', '#d24a3a', 256, 96), 0.7)), -95, 4.3, 1.05);
     b.gear('s1_doghouse', -95.5, 0.8);
     b.put(P.bush(9), -104, 0, -2);
     b.put(P.tree(17, 1.1), -86, 0, -6);
@@ -151,14 +151,14 @@ export const stage1: StageDef = {
     for (let i = 0; i < 4; i++) b.slab(98.8 + i * 3.4, 7.2, 3.3, 0.25, 'glass', { breakable: true, hp: 4, depth: 3 });
     b.coinGrid(104, 1, 4, 2);
     b.gear('s1_greenhouse', 104, 4.4);
-    b.put(P.flowerPatch(5), 100, 0, -0.6);
-    b.put(P.flowerPatch(6), 107, 0, -0.6);
+    b.put(P.flowerPatch(5), 100, 0, -1.8);
+    b.put(P.flowerPatch(6), 107, 0, -1.8);
     // grandpa's house
     b.slab(126, 6, 24, 12, 'plaster', { depth: 6 });
     b.ground([{ x: 112, y: 12 }, { x: 140, y: 12 }, { x: 126, y: 20 }], { fill: 'bluetile', top: null, depth: 7 });
     b.put(P.houseFacade(22, 11, '#e9dcc2', '#4f7fb5', 7), 126, 0, 3.2, 1).scale.set(1, 1, 0.5);
     b.vending(116, 12);
-    b.put(grandpa(), 135, 12, 0);
+    b.put(grandpa(), 143, 0, -1.8);
 
     // ------------------------------------------------------------ sky
     b.clouds(-110, 150, 40, 200, 26);
@@ -173,7 +173,7 @@ export const stage1: StageDef = {
     b.ground(cloudShape(-40, 88, 11, 2.2), { fill: 'cloud', top: null, depth: 4 });
     b.coinLine(-45, 91.5, -35, 91.5, 5);
     // stuck kite with gear
-    b.put(kite(), -30, 122, -0.6);
+    b.put(kite(), -30, 122, -1.8);
     b.gear('s1_kite', -30, 119.5);
     b.coinLine(-30, 104, -30, 114, 4);
     // coin ladder up the middle

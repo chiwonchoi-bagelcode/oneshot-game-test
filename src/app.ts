@@ -7,7 +7,7 @@ import { track } from './core/telemetry';
 import { Flight } from './game/flight';
 import { Garage } from './game/garage';
 import { STAGES } from './data/stages';
-import { partById } from './data/parts';
+import { partById, flightCheck, computeStats, autoFixLoadout } from './data/parts';
 
 type Mode = 'title' | 'stages' | 'garage' | 'flight';
 
@@ -65,6 +65,16 @@ export class App {
         this.garage.setLoadout(save.equip);
         this.ui.toast('진행을 초기화했어요.');
         track('save_reset');
+      },
+      checkBuild: () => this.checkBuild(),
+      autoFixBuild: () => {
+        const fix = autoFixLoadout(save.equip, save.owned);
+        save.equip = fix.loadout;
+        persist();
+        this.garage.setLoadout(save.equip, true);
+        track('build_autofix', { parts: fix.changed.join(',') });
+        this.ui.toast('날 수 있게 고쳤어요!');
+        if (this.mode === 'garage') this.ui.renderGarage();
       },
       click: () => {
         audio.unlock();
@@ -168,7 +178,20 @@ export class App {
     this.startFlight(this.stageId, true);
   }
 
+  /** Every sortie goes through this: an un-flyable build never reaches the seesaw. */
+  checkBuild() {
+    if (flightCheck(computeStats(save.equip)).ok) return true;
+    const fix = autoFixLoadout(save.equip, save.owned);
+    this.ui.explainBuild(fix.changed.filter((c) => c !== 'default').map((id) => partById(id).name));
+    return false;
+  }
+
   startFlight(id: string, retry = false) {
+    if (!flightCheck(computeStats(save.equip)).ok) {
+      if (this.mode === 'flight') this.setMode('garage');
+      this.checkBuild();
+      return;
+    }
     this.stageId = id;
     const st = STAGES.find((s) => s.id === id)!;
     if (this.flight) {

@@ -51,3 +51,18 @@ export async function startStage(page: Page, index: number) {
   const s = await j.state();
   expect(s.mode).toBe('flight');
 }
+
+/** Burn all fuel hovering over the launch pad, then let the rocket settle → fuel-out failure. */
+export async function failByFuel(page: Page) {
+  const j = J(page);
+  await j.launch(false);
+  const s = await j.state();
+  await j.pilot(s.rocket.x + 2, s.rocket.y + 14, 40);
+  for (let i = 0; i < 40; i++) {
+    const t = await j.state();
+    if (t.phase === 'done') break;
+    await j.advance(0.5);
+  }
+  await page.waitForFunction(() => (window as any).__jrr.state().dom.result, null, { timeout: 5000 });
+  return j.state();
+}

@@ -17,6 +17,9 @@ export interface UIHandlers {
   research(partId: string): void;
   setSetting<K extends keyof Settings>(k: K, v: Settings[K]): void;
   resetSave(): void;
+  /** true when the equipped build can fly; otherwise explains and offers a fix (C-033, C-103) */
+  checkBuild(): boolean;
+  autoFixBuild(): void;
   click(): void;
 }
 
@@ -184,16 +187,16 @@ export class UI {
   }
 
   /** In-page confirmation (the frame refuses window.confirm). */
-  confirm(title: string, body: string, ok: string, onOk: () => void, cancel = '취소', onCancel?: () => void) {
+  confirm(title: string, body: string, ok: string, onOk: () => void, cancel: string | null = '취소', onCancel?: () => void, okStyle = 'red') {
     const c = this.confirmEl;
     c.innerHTML = `
       <div class="panel confirm-panel" aria-labelledby="cf-t">
         <div class="p-title" id="cf-t">${esc(title)}</div>
         <div class="cf-body">${body}</div>
-        <div class="res-row2"><button class="btn" data-a="no" data-focus>${esc(cancel)}</button><button class="btn red" data-a="yes">${esc(ok)}</button></div>
+        <div class="res-row2">${cancel !== null ? `<button class="btn" data-a="no" data-focus>${esc(cancel)}</button>` : ''}<button class="btn ${okStyle}" data-a="yes" ${cancel === null ? 'data-focus' : ''}>${esc(ok)}</button></div>
       </div>`;
     const close = () => this.closeModal(c);
-    (c.querySelector('[data-a=no]') as HTMLElement).onclick = () => {
+    if (cancel !== null) (c.querySelector('[data-a=no]') as HTMLElement).onclick = () => {
       this.h.click();
       close();
       onCancel?.();
@@ -207,6 +210,20 @@ export class UI {
       close();
       onCancel?.();
     });
+  }
+
+  /** Un-flyable build: say why, and offer the smallest fix with owned parts. */
+  explainBuild(fixNames: string[]) {
+    const chk = flightCheck(computeStats(save.equip));
+    this.confirm(
+      '이 로켓은 못 날아요',
+      `<p>${esc(chk.reason)}</p><p class="cf-fix">💡 ${esc(chk.fix)}</p>${fixNames.length ? `<p class="cf-note">자동 수리: ${fixNames.map(esc).join(', ')}(으)로 바꿔요.</p>` : ''}`,
+      '가볍게 고쳐줘',
+      () => this.h.autoFixBuild(),
+      '직접 고칠래',
+      () => this.h.openGarage(),
+      'green',
+    );
   }
 
   // ================================================================== title
@@ -378,13 +395,7 @@ export class UI {
       }
       if (a === 'go') {
         this.h.click();
-        const chk = flightCheck(computeStats(save.equip));
-        if (!chk.ok) {
-          // C-103: explain why a legal build cannot fly, and how to fix it
-          this.confirm('이 로켓은 못 날아요', `<p>${esc(chk.reason)}</p><p class="cf-fix">💡 ${esc(chk.fix)}</p>`, '그래도 출격', () => this.h.openStages(), '고치러 가기');
-          return;
-        }
-        this.h.openStages();
+        if (this.h.checkBuild()) this.h.openStages();
         return;
       }
       if (slot) {

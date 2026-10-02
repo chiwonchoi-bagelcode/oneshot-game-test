@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { Cause, Ent, GameWorld, Rope } from './world';
 import { bakeStatic, boxUV, extrudePoly, roundedBox } from '../render/geom';
+import { hazed } from '../render/contact';
+
+/** deco placed at or behind this z is background (Q-CI); between this and +PLAY_Z it would sit in the play plane */
+export const BG_Z = -1.5;
+export const PLAY_Z = 1.5;
 import { feltMat, getMaterial, matInfo, plastic } from '../render/materials';
 import * as P from '../render/models/props';
 import { SkyColors } from '../render/renderer';
@@ -56,13 +61,37 @@ export class LevelBuilder {
   rnd = mulberry32(42);
   named = new Map<string, Ent>();
   animated: ((dt: number, t: number) => void)[] = [];
+  /** deco that sits in the play plane without a collider (should stay empty, see Q-CI-01) */
+  planeAudit: string[] = [];
 
   constructor(public w: GameWorld, public scene: THREE.Group) {
     scene.add(this.deco);
   }
 
-  /** Merge static scenery & unbreakable static geometry to cut draw calls. */
-  finalize() {
+  /**
+   * Q-CI: scenery behind the play plane is hazed toward the fog colour and stops casting
+   * shadows, so it never reads as an obstacle. Then merge static scenery & unbreakable static
+   * geometry to cut draw calls.
+   */
+  finalize(fog = '#c4def0') {
+    const fogC = new THREE.Color(fog);
+    for (const root of this.deco.children) {
+      const z = root.position.z;
+      // pass-through scenery must not sit in the play plane looking solid (Q-CI-01)
+      if (z > BG_Z && z < PLAY_Z && !root.userData.inPlane) {
+        let meshes = 0;
+        root.traverse((o) => ((o as THREE.Mesh).isMesh ? meshes++ : 0));
+        if (meshes) this.planeAudit.push(`${root.name || root.type}@${root.position.x.toFixed(1)},${root.position.y.toFixed(1)},${z.toFixed(1)}`);
+      }
+      if (root.userData.noHaze || z > BG_Z) continue;
+      const k = Math.min(0.55, 0.22 + (-z - 1.5) * 0.012);
+      root.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh || Array.isArray(m.material)) return;
+        m.material = hazed(m.material, fogC, k);
+        m.castShadow = false;
+      });
+    }
     const roots: THREE.Object3D[] = [this.deco];
     for (const e of this.w.ents) {
       if (e.obj && e.isStatic && !e.breakable && (e.kind === 'terrain' || e.kind === 'block')) {
@@ -118,12 +147,12 @@ export class LevelBuilder {
         }
       }
     }
-    this.w.addTerrain(pts, fill, g);
+    this.w.addTerrain(pts, fill, g, { depth: depth + 0.35, z: o.z ?? 0 });
     return g;
   }
 
   /** Static solid box (walls, floors, ledges). */
-  slab(x: number, y: number, w: number, h: number, mat = 'concrete', o: { angle?: number; depth?: number; top?: string; name?: string; breakable?: boolean; hp?: number } = {}) {
+  slab(x: number, y: number, w: number, h: number, mat = 'concrete', o: { angle?: number; depth?: number; top?: string; name?: string; breakable?: boolean; hp?: number; flammable?: boolean } = {}) {
     const depth = o.depth ?? 4;
     const g = new THREE.Group();
     const m = new THREE.Mesh(roundedBox(w, h, depth, Math.min(0.2, Math.min(w, h) * 0.2), matInfo(mat).uv), getMaterial(mat));
@@ -135,7 +164,9 @@ export class LevelBuilder {
       strip.castShadow = strip.receiveShadow = true;
       g.add(strip);
     }
-    const e = this.w.addBox({ x, y, w, h, angle: o.angle, mat, static: true, depth, obj: g, breakable: o.breakable ?? false, hp: o.hp, name: o.name });
+    // structure (floors, walls, counters) never catches fire unless a stage asks for it:
+    // a burning 30 m floor would become one giant heat source
+    const e = this.w.addBox({ x, y, w, h, angle: o.angle, mat, static: true, depth, obj: g, breakable: o.breakable ?? false, hp: o.hp, name: o.name, flammable: o.flammable ?? (o.breakable ? undefined : false) });
     if (o.name) this.named.set(o.name, e);
     return e;
   }
@@ -177,8 +208,8 @@ export class LevelBuilder {
   }
 
   // ---------------------------------------------------------------- props
-  waterTank(x: number, y: number, w = 1.6, h = 2.0, amount = 60, o: { static?: boolean; name?: string } = {}) {
-    const vis = P.waterTank(w, h);
+  waterTank(x: number, y: number, w = 1.6, h = 2.0, amount = 60, o: { static?: boolean; name?: string; obj?: THREE.Object3D } = {}) {
+    const vis = o.obj ?? P.waterTank(w, h);
     const e = this.w.addBox({ x, y, w, h, mat: 'ceramic', hp: 14, obj: vis, kind: 'tank', density: 1.2, static: o.static, noDebris: true, name: o.name });
     e.data = { sound: 'soft' };
     e.onBreak = (_c, en) => {
@@ -214,7 +245,7 @@ export class LevelBuilder {
     const holder = new THREE.Group();
     vis.position.y = -0.7;
     holder.add(vis);
-    const e = this.w.addBox({ x, y: y + 0.7, w: 0.7, h: 1.4, mat: 'redmetal', static: true, hp: 22, breakable: true, obj: holder, kind: 'hydrant', noDebris: true });
+    const e = this.w.addBox({ x, y: y + 0.7, w: 0.7, h: 1.4, mat: 'redmetal', static: true, hp: 22, breakable: true, obj: holder, kind: 'hydrant', noDebris: true, role: 'device' });
     e.onBreak = () => {
       const wind = this.w.addWind({ x, y: y + 0.5, ang: Math.PI / 2, len: 16, wid: 2.4, power, active: true, water: true });
       this.w.addEmitter({ x, y: y + 0.9, dx: 0, dy: 1, rate: 18, speed: 17, time: seconds, spread: 0.12, wind });
@@ -231,7 +262,7 @@ export class LevelBuilder {
 
   fireworks(x: number, y: number, w = 1.4, h = 1.0, o: { radius?: number; power?: number; cause?: Cause } = {}) {
     const vis = P.fireworksCrate(w, h);
-    const e = this.w.addBox({ x, y, w, h, mat: 'wood', hp: 10, obj: vis, kind: 'fireworks', density: 2.0, flammable: true, noDebris: true });
+    const e = this.w.addBox({ x, y, w, h, mat: 'wood', hp: 10, obj: vis, kind: 'fireworks', density: 2.0, flammable: true, noDebris: true, role: 'device' });
     e.onBreak = (_c, en) => {
       const p = (en as any)._lastPos ?? { x, y };
       const R = o.radius ?? 6;
@@ -300,9 +331,11 @@ export class LevelBuilder {
     stand.position.y = -0.9;
     holder.add(stand);
     holder.userData.dynamic = true;
+    holder.userData.inPlane = true;
+    holder.userData.noHaze = true;
     this.deco.add(holder);
-    // static collider for the fan housing
-    this.w.addBox({ x, y, w: size * 0.9, h: 0.6, angle: ang - Math.PI / 2, mat: 'metal', static: true, breakable: false, obj: null });
+    // static collider for the fan housing (empty visual: it carries the Q-CI outline)
+    this.w.addBox({ x, y, w: size * 0.9, h: 0.6, angle: ang - Math.PI / 2, mat: 'metal', static: true, breakable: false, obj: new THREE.Group(), depth: 1.2 });
     return this.w.addWind({ x, y, ang, len: length, wid: size * 1.1, power, blades, active: true });
   }
 
@@ -310,14 +343,14 @@ export class LevelBuilder {
     const vis = P.springPad(w);
     const holder = new THREE.Group();
     holder.add(vis);
-    const e = this.w.addBox({ x, y, w, h: 0.5, angle: ang, mat: 'rubber', static: true, breakable: false, obj: holder, kind: 'spring', restitution: 0.6 });
+    const e = this.w.addBox({ x, y, w, h: 0.5, angle: ang, mat: 'rubber', static: true, breakable: false, obj: holder, kind: 'spring', restitution: 0.6, role: 'device' });
     e.data = { power, squash: 0 };
     return e;
   }
 
   vending(x: number, y: number) {
     const vis = P.vendingMachine();
-    const e = this.w.addBox({ x, y: y + 1.3, w: 1.6, h: 2.6, mat: 'redmetal', hp: 55, obj: vis, kind: 'vending', density: 1.4, coins: 12 });
+    const e = this.w.addBox({ x, y: y + 1.3, w: 1.6, h: 2.6, mat: 'redmetal', hp: 55, obj: vis, kind: 'vending', density: 1.4, coins: 12, role: 'device' });
     e.onHit = (J) => {
       if (J > 10 && e.alive && this.w.time - (e.hitCd ?? -9) > 0.6) {
         e.hitCd = this.w.time;
@@ -335,7 +368,7 @@ export class LevelBuilder {
     const holder = new THREE.Group();
     vis.position.y = 0.45;
     holder.add(vis);
-    const e = this.w.addBox({ x, y: y - 0.45, w: 1.4, h: 1.0, mat: 'metal', breakable: false, obj: holder, kind: 'bell', density: 2 });
+    const e = this.w.addBox({ x, y: y - 0.45, w: 1.4, h: 1.0, mat: 'metal', breakable: false, obj: holder, kind: 'bell', density: 2, role: 'device' });
     this.w.addHinge(null, e, x, y + 0.1);
     let dings = 0;
     e.onHit = (J, other) => {
@@ -408,8 +441,66 @@ export class LevelBuilder {
     return obj;
   }
 
-  sign(x: number, y: number, text: string, z = -1.2, w = 2.6, h = 1.2) {
-    return this.put(P.signPost(text, w, h), x, y, z);
+  /**
+   * Foreground wall of an interior (Q-CI-05): opaque from afar so the house reads as a house,
+   * fades to a ghost as the rocket approaches/enters so it never hides the rocket, the openings
+   * or the way out. Never a collider.
+   */
+  cutaway(obj: THREE.Object3D, zone: { minX: number; maxX: number; minY: number; maxY: number }, near = 3, far = 13) {
+    obj.userData.dynamic = true;
+    obj.userData.noHaze = true;
+    const mats = new Map<THREE.Material, THREE.Material>();
+    obj.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || Array.isArray(m.material)) return;
+      let c = mats.get(m.material);
+      if (!c) {
+        c = m.material.clone();
+        c.transparent = true;
+        mats.set(m.material, c);
+      }
+      m.material = c;
+      m.castShadow = false;
+    });
+    this.deco.add(obj);
+    let op = 1;
+    this.animated.push((dt) => {
+      const R = this.w.rocket;
+      let want = 1;
+      if (R && !R.dead && R.ent.body) {
+        const p = R.ent.body.getPosition();
+        const dx = Math.max(zone.minX - p.x, 0, p.x - zone.maxX);
+        const dy = Math.max(zone.minY - p.y, 0, p.y - zone.maxY);
+        const d = Math.hypot(dx, dy);
+        want = 0.1 + 0.9 * Math.min(1, Math.max(0, (d - near) / (far - near)));
+      }
+      op += (want - op) * Math.min(1, dt * 6);
+      for (const m of mats.values()) {
+        m.opacity = op;
+        m.depthWrite = op > 0.97;
+      }
+      obj.visible = op > 0.11;
+    });
+    return obj;
+  }
+
+  /** Info sign: thin post just behind the play plane; kept crisp (no haze) because it is read. */
+  sign(x: number, y: number, text: string, z = -1.7, w = 2.6, h = 1.2) {
+    const o = this.put(P.signPost(text, w, h), x, y, Math.min(z, BG_Z - 0.2));
+    o.userData.noHaze = true;
+    o.name = 'sign';
+    return o;
+  }
+
+  /**
+   * Visual of something that *is* in the play plane and has its own collider/role elsewhere
+   * (device visuals, models of colliders built separately). Exempt from the plane audit.
+   */
+  putInPlane(obj: THREE.Object3D, x: number, y: number, z = 0) {
+    const o = this.put(obj, x, y, z);
+    o.userData.inPlane = true;
+    o.userData.noHaze = true;
+    return o;
   }
 
   backdropHills(minX: number, maxX: number, y: number, colors: string[], zs: number[]) {

@@ -247,7 +247,9 @@ export function resetProgress() {
   Object.assign(save, freshSave());
   save.settings = keep;
   try {
+    // drop both slots first, or persist() would move the erased progress into the backup
     localStorage.removeItem(BACKUP_KEY);
+    localStorage.removeItem(KEY);
   } catch {
     /* ignore */
   }
