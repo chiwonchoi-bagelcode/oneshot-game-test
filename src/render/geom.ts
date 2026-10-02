@@ -119,6 +119,7 @@ export function bakeStatic(roots: THREE.Object3D[], out: THREE.Group) {
           buckets.set(key, b);
         }
         const g = m.geometry.clone();
+        g.userData = {}; // a clone is owned by its new mesh, never by a shared cache (R-07)
         g.applyMatrix4(m.matrixWorld);
         b.geos.push(g);
         victims.push(m);
@@ -195,6 +196,7 @@ export function mergeByMaterial(root: THREE.Object3D, minParts = 3) {
       let b = buckets.get(key);
       if (!b) buckets.set(key, (b = { mat: m.material, cast: m.castShadow, geos: [] }));
       const g = m.geometry.clone();
+        g.userData = {}; // a clone is owned by its new mesh, never by a shared cache (R-07)
       g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
       b.geos.push(g);
       victims.push(m);

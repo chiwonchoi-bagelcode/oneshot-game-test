@@ -11,6 +11,7 @@ import { FlightInput } from '../core/input';
 import { audio } from '../core/audio';
 import { Loadout } from '../data/parts';
 import { clamp, damp, easeInOutCubic, len, lerp, rand, seedGame, hashStr } from '../core/math';
+import { FuelJudge } from './fuelJudge';
 import { save, persist, stageProg } from '../core/save';
 import { track } from '../core/telemetry';
 import { disposeTree } from '../render/geom';
@@ -95,8 +96,7 @@ export class Flight {
   gearsGot: string[] = [];
   gearsAgain = 0;
   private maxAlt = 0;
-  private settleT = 0;
-  private emptyT = 0;
+  private fuelJudge = new FuelJudge();
   private endReason = '';
   private endTip = '';
   result: RunResult | null = null;
@@ -161,8 +161,7 @@ export class Flight {
         this.rocket.fuel = Math.min(this.rocket.stats.fuel, this.rocket.fuel + a);
         this.rocket.outOfFuelWarned = false;
         // R-03: a refuel gives a brand new chance — empty/settle timers restart
-        this.emptyT = 0;
-        this.settleT = 0;
+        this.fuelJudge.refuel();
         this.warnedFuel = false;
         this.ui.popWorld(this.toScreen(x, y), '연료 충전!', 'fuel');
       },
@@ -811,11 +810,8 @@ export class Flight {
       return;
     }
     // C-093: fuel 0 is not a failure by itself — only once the rocket has truly come to rest
-    if (r.fuel <= 0 && r.boosting <= 0) {
-      this.emptyT += dt;
-      if (r.speed() < 0.8) this.settleT += dt;
-      else this.settleT = Math.max(0, this.settleT - dt * 0.5);
-      if (this.settleT > 1.4 || this.emptyT > 20) {
+    {
+      if (this.fuelJudge.update(dt, r.fuel, r.boosting > 0, r.speed())) {
         const T = this.world.targetEnt;
         const d = T?.body ? Math.round(len(T.body.getPosition().x - p.x, T.body.getPosition().y - p.y)) : 0;
         this.failCandidate([`연료가 바닥났어요 (목표까지 ${d}m)`, '손을 떼고 관성으로 날면 연료를 아낄 수 있어요. 연료통을 줍거나 큰 연료통을 연구해보자.'], '연료 바닥!');
@@ -826,8 +822,18 @@ export class Flight {
   /** Quit from the pause menu: settle what was earned so far, no result screen. */
   abandon() {
     if (this.phase === 'done') return;
+    // the target already fell: leaving during the escape keeps the success (no escape bonus)
+    if (this.phase === 'escape') {
+      this.finish(true, true);
+      return;
+    }
     this.endReason = '중도 포기';
     this.finish(false, true);
+  }
+
+  /** App hidden / killed mid-escape: settle the success now so it can't be lost (C-176). */
+  settleIfWon() {
+    if (this.phase === 'escape') this.finish(true);
   }
 
   private finish(success: boolean, abandoned = false) {
@@ -1050,9 +1056,13 @@ export class Flight {
 
   /** Release everything this run owns (R-07). Shared caches are left alone. */
   dispose() {
+    this.ui.showJoyHint(false);
     this.fx.dispose();
     this.pRT?.dispose();
     this.pQuadMat.dispose();
+    for (const o of this.pQuadScene.children) (o as THREE.Mesh).geometry?.dispose();
+    // lights own their shadow-map render targets (R-07)
+    for (const sc of [this.scene, this.pScene]) sc.traverse((o) => ((o as THREE.Light).isLight ? (o as THREE.Light).dispose() : 0));
     this.ui.showHud(false);
     this.ui.setTarget(null);
     this.ui.showJoystick(null);

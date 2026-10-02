@@ -13,6 +13,7 @@ import type { App } from '../app';
 import { save, loadStatus, loadProblems } from '../core/save';
 import { events } from '../core/telemetry';
 import { computeStats } from '../data/parts';
+import * as THREE from 'three';
 import { PerfMeter, installPerfOverlay } from './perf';
 import { stressStage } from './stress';
 
@@ -206,8 +207,8 @@ export function installTestHooks(app: App) {
       cause: f ? f.targetCause ?? null : null,
       perfect: f?.perfect ?? false,
       tappedEarly: f?.tappedEarly ?? false,
-      emptyT: f ? +(f as any).emptyT.toFixed(2) : 0,
-      settleT: f ? +(f as any).settleT.toFixed(2) : 0,
+      emptyT: f ? +(f as any).fuelJudge.emptyT.toFixed(2) : 0,
+      settleT: f ? +(f as any).fuelJudge.settleT.toFixed(2) : 0,
       runCoins: f?.runCoins ?? 0,
       gearsGot: f ? f.gearsGot.slice() : [],
       gearsAgain: f?.gearsAgain ?? 0,
@@ -274,5 +275,41 @@ export function installTestHooks(app: App) {
     advance(0.05);
   };
 
-  (window as any).__jrr = { app, advance, step, tap, down, move, up, press, launch, pilot, coast, state, where, events, perf, stress };
+  // R-07 audit: every geometry the renderer uploads registers a 'dispose' listener — track them
+  const live = new Set<THREE.BufferGeometry>();
+  const origAdd = THREE.EventDispatcher.prototype.addEventListener;
+  THREE.BufferGeometry.prototype.addEventListener = function (this: THREE.BufferGeometry, type: string, fn: any) {
+    if (type === 'dispose') live.add(this);
+    return origAdd.call(this, type as any, fn);
+  } as any;
+  const origDispose = THREE.BufferGeometry.prototype.dispose;
+  THREE.BufferGeometry.prototype.dispose = function (this: THREE.BufferGeometry) {
+    live.delete(this);
+    return origDispose.call(this);
+  };
+  const geoAudit = () => {
+    const inScene = new Set<THREE.BufferGeometry>();
+    for (const sc of [app.flight?.scene, (app.flight as any)?.pScene, (app.flight as any)?.pQuadScene, app.garage.scene]) sc?.traverse((o: any) => o.geometry && inScene.add(o.geometry));
+    const orphans: Record<string, number> = {};
+    let shared = 0;
+    let scene = 0;
+    const sharedKinds: Record<string, number> = {};
+    for (const g of live) {
+      if (inScene.has(g)) {
+        scene++;
+        continue;
+      }
+      if (g.userData.shared) {
+        shared++;
+        const k = `${g.type}:${g.attributes.position?.count ?? 0}`;
+        sharedKinds[k] = (sharedKinds[k] ?? 0) + 1;
+        continue;
+      }
+      const k = `${g.type}:${g.attributes.position?.count ?? 0}`;
+      orphans[k] = (orphans[k] ?? 0) + 1;
+    }
+    return { live: live.size, scene, shared, sharedKinds: Object.entries(sharedKinds).sort((a, b) => b[1] - a[1]).slice(0, 12), orphans: Object.entries(orphans).sort((a, b) => b[1] - a[1]).slice(0, 30) };
+  };
+
+  (window as any).__jrr = { app, advance, step, tap, down, move, up, press, launch, pilot, coast, state, where, events, perf, stress, geoAudit };
 }

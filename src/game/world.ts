@@ -998,6 +998,18 @@ export class GameWorld {
     return m;
   }
 
+  /** true when no static (unbreakable or still standing) wall lies between two points */
+  clearLine(ax: number, ay: number, bx: number, by: number) {
+    if (Math.hypot(bx - ax, by - ay) < 0.05) return true;
+    let blocked = false;
+    this.pw.rayCast(Vec2(ax, ay), Vec2(bx, by), (f) => {
+      if (f.isSensor() || !f.getBody().isStatic()) return -1;
+      blocked = true;
+      return 0;
+    });
+    return !blocked;
+  }
+
   /** interpolated transform of a body for drawing */
   private lerpT(e: Ent, alpha: number) {
     const b = e.body!;
@@ -1501,8 +1513,8 @@ export class GameWorld {
       const dx = rp.x - p.x;
       const dy = rp.y - p.y;
       const d = len(dx, dy);
-      if (p.kind === 'coin' && d < 3.2 && !(p.delay! > 0)) {
-        // magnet
+      if (p.kind === 'coin' && d < 3.2 && !(p.delay! > 0) && this.clearLine(p.x, p.y, rp.x, rp.y)) {
+        // magnet (never through walls)
         const k = (1 - d / 3.2) * 26 * dt;
         p.x += (dx / Math.max(d, 0.01)) * k;
         p.y += (dy / Math.max(d, 0.01)) * k;

@@ -9,7 +9,7 @@ import { boot } from './helpers';
  * the counters (draw calls, awake bodies, debris, water, particles) and the CPU update time are
  * the regression guard. Real-device FPS stays "검증 대기" in the approval matrix.
  */
-test('stress: max interior chaos stays inside the budgets', async ({ page }) => {
+test('stress: max interior chaos stays inside the budgets @perf', async ({ page }) => {
   test.setTimeout(600_000);
   await boot(page, { save: { v: 2, stages: { s1: { cleared: true } }, tutorialDone: true, seenIntro: { stress: true } } });
   const out = await page.evaluate(() => {

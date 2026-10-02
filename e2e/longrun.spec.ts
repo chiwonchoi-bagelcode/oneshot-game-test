@@ -9,7 +9,7 @@ import { boot, J, startStage } from './helpers';
  */
 const STARTER = { bottle: true, cola: true, milk: true, hat: true, cardboard: true };
 
-test('100 retries: GPU objects and heap converge [fixture: stage 2 unlocked]', async ({ page }) => {
+test('100 retries: GPU objects and heap converge [fixture: stage 2 unlocked] @perf', async ({ page }) => {
   test.setTimeout(1_500_000);
   await boot(page, { save: { v: 2, stages: { s1: { cleared: true } }, tutorialDone: true, seenIntro: { s1: true, s2: true } } });
   const j = J(page);
@@ -41,7 +41,7 @@ test('100 retries: GPU objects and heap converge [fixture: stage 2 unlocked]', a
   expect(last.settled).toBe(last.attempts - 1);
 });
 
-test('100 part swaps in the garage: GPU objects converge [fixture: parts owned]', async ({ page }) => {
+test('100 part swaps in the garage: GPU objects converge [fixture: parts owned] @perf', async ({ page }) => {
   test.setTimeout(900_000);
   const owned = { ...STARTER, paint: true, cooker: true, spray: true, extinguisher: true };
   await boot(page, { save: { v: 2, owned, tutorialDone: true } });

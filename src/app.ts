@@ -106,12 +106,23 @@ export class App {
       audio.suspend(document.hidden);
       if (document.hidden) {
         this.input.reset();
+        this.flight?.settleIfWon();
         if (this.mode === 'flight' && this.flight?.canPause()) this.setPaused(true);
         persist();
       }
       this.last = performance.now();
     });
-    window.addEventListener('pagehide', () => persist());
+    window.addEventListener('pagehide', () => {
+      this.flight?.settleIfWon();
+      persist();
+    });
+    // Android/browser back = Escape (close dialog → pause), never a silent exit mid-flight
+    history.pushState({ jrr: 1 }, '');
+    window.addEventListener('popstate', () => {
+      if (!this.ui.handleEscape() && this.mode === 'flight' && this.flight?.canPause()) this.setPaused(true);
+      else if (!this.ui.modalOpen() && this.mode !== 'title' && this.mode !== 'flight') this.setMode('title');
+      history.pushState({ jrr: 1 }, '');
+    });
     // C-125: a lost GPU context is reported and recovered instead of leaving a frozen frame
     canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();

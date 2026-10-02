@@ -1,3 +1,4 @@
+import { BUDGET } from '../game/budgets';
 import { clamp, rand } from './math';
 
 type Mat = string;
@@ -87,8 +88,23 @@ export class Audio {
     return true;
   }
 
+  /** Q-PF-03: end times of sound-effect voices still playing; new ones are dropped past the budget */
+  private voiceEnds: number[] = [];
+  private claimVoice(t: number, end: number) {
+    this.voiceEnds = this.voiceEnds.filter((e) => e > t);
+    if (this.voiceEnds.length >= BUDGET.voices) return false;
+    this.voiceEnds.push(end);
+    return true;
+  }
+  /** voices currently playing (perf overlay) */
+  voices() {
+    const t = this.ctx?.currentTime ?? 0;
+    return this.voiceEnds.filter((e) => e > t).length;
+  }
+
   private noise(t: number, dur: number, filterType: BiquadFilterType, f0: number, f1: number, q: number, vol: number, attack = 0.005) {
     const ctx = this.ctx!;
+    if (!this.claimVoice(ctx.currentTime, t + dur)) return;
     const src = ctx.createBufferSource();
     src.buffer = this.noiseBuf;
     src.playbackRate.value = rand(0.9, 1.1);
@@ -108,6 +124,7 @@ export class Audio {
 
   private tone(t: number, type: OscillatorType, f0: number, f1: number, dur: number, vol: number, attack = 0.005, bus?: AudioNode) {
     const ctx = this.ctx!;
+    if (!bus && !this.claimVoice(ctx.currentTime, t + dur)) return; // music has its own bus, never culled
     const o = ctx.createOscillator();
     o.type = type;
     o.frequency.setValueAtTime(f0, t);

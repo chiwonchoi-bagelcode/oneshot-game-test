@@ -57,10 +57,11 @@ export const stage3: StageDef = {
     const legs = new THREE.Group();
     for (const s of [-1, 1]) {
       const leg = new THREE.Mesh(roundedBox(1.2, WY + 2, 1.2, 0.2, 0.5), metalMat('#e8e8f0', 0.4));
-      leg.position.set(WX + s * 9, WY / 2, -3.2);
+      leg.position.set(WX + s * 9, WY / 2, 0);
       leg.rotation.z = s * 0.3;
       legs.add(leg);
     }
+    legs.position.z = -3.2; // behind the play plane (background, Q-CI)
     b.deco.add(legs);
     const spokeBody = b.w.pw.createBody({ type: 'kinematic', position: Vec2(WX, WY) });
     // 8 arms that leave the hub hollow: thread between them to reach the treasure

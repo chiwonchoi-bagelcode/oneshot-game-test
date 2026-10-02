@@ -16,7 +16,7 @@
 html, body {
   margin: 0; height: 100%; overflow: hidden; background: #2a1d14;
   font-family: var(--font); color: var(--brown);
-  user-select: none; -webkit-user-select: none; touch-action: none; overscroll-behavior: none;
+  user-select: none; -webkit-user-select: none; touch-action: pan-x pan-y pinch-zoom; overscroll-behavior: none;
 }
 body {
   background:
@@ -218,7 +218,7 @@ body {
 @keyframes blink { 50% { border-color: #ff4040; } }
 .hud-right { display: flex; gap: 6px; align-items: center; }
 .hud-right .pill { font-size: 16px; padding: 2px 10px 2px 4px; }
-.hud-right .iconbtn { width: 40px; height: 40px; }
+.hud-right .iconbtn { width: 48px; height: 48px; }
 .alt-t { position: absolute; right: 12px; top: calc(62px + env(safe-area-inset-top)); font-size: 14px; color: #fff; text-shadow: 0 2px 0 rgba(60,35,15,0.6); display: flex; align-items: center; gap: 2px; }
 .alt-t .ico { width: 16px; height: 16px; }
 .alt-t b { font-weight: normal; font-size: 18px; }
