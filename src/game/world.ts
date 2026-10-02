@@ -5,7 +5,7 @@ import { matInfo } from '../render/materials';
 import { blockMesh, bottleCapGeometry, gearPickup, fuelCan } from '../render/models/props';
 import { GRAVITY, RocketStats } from '../data/parts';
 import { audio } from '../core/audio';
-import { clamp, distPointSeg, len, rand, wrapAngle } from '../core/math';
+import { clamp, distPointSeg, len, rand, grand, wrapAngle } from '../core/math';
 import { disposeTree } from '../render/geom';
 import { windAccel } from './wind';
 import { ContactRole, contactOutline, setCracks, terrainOutline, animateContact } from '../render/contact';
@@ -409,7 +409,7 @@ export class GameWorld {
   }
 
   addCoin(x: number, y: number, value = 10, loose = false, vx = 0, vy = 0) {
-    const p: Pickup = { kind: 'coin', x, y, vx, vy, taken: false, value, t: rand(0, 6), loose, delay: loose ? 0.35 : 0 };
+    const p: Pickup = { kind: 'coin', x, y, vx, vy, taken: false, value, t: grand(0, 6), loose, delay: loose ? 0.35 : 0 };
     this.pickups.push(p);
     return p;
   }
@@ -432,7 +432,7 @@ export class GameWorld {
     const obj = fuelCan();
     obj.position.set(x, y, 0);
     this.scene.add(obj);
-    const p: Pickup = { kind: 'fuel', x, y, vx: 0, vy: 0, taken: false, value: amount, obj, t: rand(0, 3) };
+    const p: Pickup = { kind: 'fuel', x, y, vx: 0, vy: 0, taken: false, value: amount, obj, t: grand(0, 3) };
     this.pickups.push(p);
     return p;
   }
@@ -467,7 +467,7 @@ export class GameWorld {
     const e = this.baseEnt('water', 'water', 0.32, 0.32);
     e.isStatic = false;
     e.life = 0;
-    e.maxLife = rand(9, 13);
+    e.maxLife = grand(9, 13);
     const body = this.pw.createBody({ type: 'dynamic', position: Vec2(x, y), linearVelocity: Vec2(vx, vy), fixedRotation: true, linearDamping: 0.05 });
     body.createFixture({
       shape: new planck.Circle(0.17),
@@ -486,9 +486,9 @@ export class GameWorld {
 
   waterBurst(x: number, y: number, n: number, vx = 0, vy = 0, spread = 5) {
     for (let i = 0; i < n; i++) {
-      const a = rand(0, Math.PI * 2);
-      const r = Math.sqrt(Math.random()) * 0.8;
-      this.spawnWater(x + Math.cos(a) * r, y + Math.sin(a) * r, vx + rand(-spread, spread), vy + rand(-spread * 0.5, spread));
+      const a = grand(0, Math.PI * 2);
+      const r = Math.sqrt(grand()) * 0.8;
+      this.spawnWater(x + Math.cos(a) * r, y + Math.sin(a) * r, vx + grand(-spread, spread), vy + grand(-spread * 0.5, spread));
     }
     audio.splash();
     this.fx.splash(x, y, 16, 7);
@@ -613,6 +613,9 @@ export class GameWorld {
       const [b, depth] = queue.shift()!;
       if (seen.has(b)) continue;
       seen.add(b);
+      // static structure (floors, walls) never moves: it neither carries a chain cause nor relays
+      // it to everything else resting on it — only a seed (e.g. a support being destroyed) does
+      if (depth > 0 && b.isStatic()) continue;
       const e = b.getUserData() as Ent;
       if (e && e.kind !== 'terrain' && e.kind !== 'rocket') {
         // the first chain to set something in motion owns it until it settles
@@ -734,6 +737,11 @@ export class GameWorld {
         audio.sizzle();
         this.fx.impactPuff(w.body!.getPosition().x, w.body!.getPosition().y, 0, 1, 0.4, 0xeeeeee);
       }
+      // a loose object shoved by water keeps 'water' as its chain cause (R-06)
+      if (o.alive && o.body?.isDynamic() && o.kind !== 'rocket' && !this.hintAlive(o)) {
+        o.hint = 'water';
+        o.hintT = this.time;
+      }
       if (o.soakMax > 0 && !w.data?.soaked && o.alive) {
         w.data = { soaked: true };
         o.soak++;
@@ -821,8 +829,8 @@ export class GameWorld {
           const ly = -e.h / 2 + ph * (j + 0.5);
           const wx = p.x + lx * ca - ly * sa;
           const wy = p.y + lx * sa + ly * ca;
-          let dvx = v.x + ivx + rand(-2, 2);
-          let dvy = v.y + ivy + rand(-1, 3);
+          let dvx = v.x + ivx + grand(-2, 2);
+          let dvy = v.y + ivy + grand(-1, 3);
           if (hx !== undefined && hy !== undefined) {
             const dx = wx - hx;
             const dy = wy - hy;
@@ -830,7 +838,7 @@ export class GameWorld {
             dvx += (dx / d) * 2.5;
             dvy += (dy / d) * 2.5;
           }
-          this.spawnDebris(wx, wy, pw * rand(0.75, 0.95), ph * rand(0.75, 0.95), ang + rand(-0.3, 0.3), e.mat, dvx, dvy, Math.min(e.depth, 1.4));
+          this.spawnDebris(wx, wy, pw * grand(0.75, 0.95), ph * grand(0.75, 0.95), ang + grand(-0.3, 0.3), e.mat, dvx, dvy, Math.min(e.depth, 1.4));
         }
     }
     this.fx.chipsBurst(p.x, p.y, Math.min(24, 6 + Math.round(e.w * e.h * 3)), info.debris, 7, 0.18);
@@ -840,8 +848,8 @@ export class GameWorld {
     // coins / score
     if (e.coins) {
       for (let i = 0; i < e.coins; i++) {
-        const a = rand(0, Math.PI * 2);
-        this.addCoin(p.x, p.y, 10, true, Math.cos(a) * rand(3, 8), Math.sin(a) * rand(3, 9) + 3);
+        const a = grand(0, Math.PI * 2);
+        this.addCoin(p.x, p.y, 10, true, Math.cos(a) * grand(3, 8), Math.sin(a) * grand(3, 9) + 3);
       }
     }
     e.onBreak?.(cause, e);
@@ -863,10 +871,10 @@ export class GameWorld {
     const e = this.baseEnt('debris', mat, w, h);
     e.isStatic = false;
     e.life = 0;
-    e.maxLife = mat === 'glass' ? rand(1.2, 2.2) : rand(4.5, 7);
+    e.maxLife = mat === 'glass' ? grand(1.2, 2.2) : grand(4.5, 7);
     e.flammable = false;
     const body = this.pw.createBody({
-      type: 'dynamic', position: Vec2(x, y), angle: ang, linearVelocity: Vec2(vx, vy), angularVelocity: rand(-8, 8), linearDamping: 0.05, angularDamping: 0.3,
+      type: 'dynamic', position: Vec2(x, y), angle: ang, linearVelocity: Vec2(vx, vy), angularVelocity: grand(-8, 8), linearDamping: 0.05, angularDamping: 0.3,
     });
     body.createFixture({
       shape: new planck.Box(w / 2, h / 2),
@@ -878,8 +886,8 @@ export class GameWorld {
     });
     body.setUserData(e);
     e.body = body;
-    e.obj = blockMesh(w, h, depth * rand(0.6, 1), mat);
-    e.obj.position.set(x, y, rand(-0.3, 0.3));
+    e.obj = blockMesh(w, h, depth * grand(0.6, 1), mat);
+    e.obj.position.set(x, y, grand(-0.3, 0.3));
     this.debris.push(e);
     this.register(e);
     return e;
@@ -966,7 +974,7 @@ export class GameWorld {
         this.rocket?.damage(power * fall * 0.55, x, y, 'boom');
         continue;
       }
-      this.propagateHint([b], cause);
+      if (b.isDynamic()) this.propagateHint([b], cause);
       if (e.breakable) {
         e.hp -= power * 2 * fall;
         if (e.hp <= 0) this.queueBreak(e, cause, nx * 6, ny * 6, x, y);
@@ -1017,10 +1025,10 @@ export class GameWorld {
       if (b.isDynamic()) {
         const F = st.push * strength * (e.kind === 'water' ? 0.05 : 1) / angs.length;
         b.applyForce(Vec2(Math.cos(a) * F * 8, Math.sin(a) * F * 8), hitP, true);
-      } else if (Math.random() < 0.35 * strength) {
+      } else if (grand() < 0.35 * strength) {
         // ground effect dust
         const col = st.exhaust === 'powder' ? 0xffffff : 0xd8cfc0;
-        this.fx.smoke.spawn({ x: hitP.x, y: hitP.y, z: rand(-0.5, 0.5), vx: -Math.sin(a) * rand(-6, 6), vy: rand(1, 3), life: rand(0.5, 1.0), s0: 0.2, s1: rand(0.7, 1.2), c0: col, c1: 0xf4f0e8, drag: 3, puff: true });
+        this.fx.smoke.spawn({ x: hitP.x, y: hitP.y, z: grand(-0.5, 0.5), vx: -Math.sin(a) * grand(-6, 6), vy: grand(1, 3), life: grand(0.5, 1.0), s0: 0.2, s1: grand(0.7, 1.2), c0: col, c1: 0xf4f0e8, drag: 3, puff: true });
       }
 
       if (st.exhaust === 'powder' && (e.burning || e.heat > 0)) {
@@ -1045,7 +1053,7 @@ export class GameWorld {
           if (!e || !e.alive || !e.flammable || seen.has(e) || f.isSensor()) return true;
           seen.add(e);
           e.heat += dt * 2.6 * (0.35 + 0.65 * R.throttle);
-          if (Math.random() < 0.3) this.fx.fire(px, py, 0.4, 0.5);
+          if (grand() < 0.3) this.fx.fire(px, py, 0.4, 0.5);
           return true;
         });
       }
@@ -1058,7 +1066,7 @@ export class GameWorld {
       const mid = distPointSeg(nz.x + nz.dx * reach * 0.5, nz.y + nz.dy * reach * 0.5, pa.x, pa.y, pb.x, pb.y);
       if (mid.d < reach * 0.55 && st.exhaust === 'torch' && r.flammable) {
         r.heat += dt * 1.4 * R.throttle;
-        if (Math.random() < 0.5) this.fx.fire(mid.cx, mid.cy, 0.2, 0.5);
+        if (grand() < 0.5) this.fx.fire(mid.cx, mid.cy, 0.2, 0.5);
         if (r.heat >= 1) this.cutRope(r);
       }
     }
@@ -1191,11 +1199,11 @@ export class GameWorld {
       em.acc += em.rate * dt;
       while (em.acc >= 1) {
         em.acc -= 1;
-        const a = Math.atan2(em.dy, em.dx) + rand(-em.spread, em.spread);
-        const sp = em.speed * rand(0.85, 1.1);
-        this.spawnWater(em.x + rand(-0.2, 0.2), em.y + rand(-0.2, 0.2), Math.cos(a) * sp, Math.sin(a) * sp);
+        const a = Math.atan2(em.dy, em.dx) + grand(-em.spread, em.spread);
+        const sp = em.speed * grand(0.85, 1.1);
+        this.spawnWater(em.x + grand(-0.2, 0.2), em.y + grand(-0.2, 0.2), Math.cos(a) * sp, Math.sin(a) * sp);
       }
-      if (Math.random() < 0.3) this.fx.splash(em.x, em.y, 2, em.speed * 0.4);
+      if (grand() < 0.3) this.fx.splash(em.x, em.y, 2, em.speed * 0.4);
     }
   }
 
@@ -1224,13 +1232,13 @@ export class GameWorld {
         continue;
       }
       f.t += dt;
-      if (Math.random() < 0.9) this.fx.fire(f.x, f.y + 0.3, f.w, 1);
+      if (grand() < 0.9) this.fx.fire(f.x, f.y + 0.3, f.w, 1);
     }
     for (const e of this.ents) {
       if (!e.alive || !e.body) continue;
       if (e.burning) {
         const p = e.body.getPosition();
-        if (Math.random() < 0.8) this.fx.fire(p.x, p.y + e.h * 0.3, e.w, 0.8);
+        if (grand() < 0.8) this.fx.fire(p.x, p.y + e.h * 0.3, e.w, 0.8);
       }
     }
     if (this.fireTick < 0.1) return;
@@ -1250,9 +1258,9 @@ export class GameWorld {
         if (e.data?.fuse && e.burnT > e.data.fuse) this.queueBreak(e, 'fire');
         if (e.kind === 'balloon') this.queueBreak(e, 'fire');
       } else if (e.flammable) {
-        if (e.heat > 0.25 && Math.random() < e.heat) {
+        if (e.heat > 0.25 && grand() < e.heat) {
           const p = e.body.getPosition();
-          this.fx.smoke.spawn({ x: p.x + rand(-e.w, e.w) * 0.4, y: p.y + e.h * 0.4, z: 0.4, vx: rand(-0.4, 0.4), vy: rand(1, 2), life: 1, s0: 0.1, s1: 0.5, c0: 0x777066, c1: 0xb0aaa0, drag: 1, puff: true });
+          this.fx.smoke.spawn({ x: p.x + grand(-e.w, e.w) * 0.4, y: p.y + e.h * 0.4, z: 0.4, vx: grand(-0.4, 0.4), vy: grand(1, 2), life: 1, s0: 0.1, s1: 0.5, c0: 0x777066, c1: 0xb0aaa0, drag: 1, puff: true });
         }
         if (e.heat >= 1) {
           e.burning = true;
@@ -1288,7 +1296,7 @@ export class GameWorld {
       for (const s of sources) {
         if (len(rp.x - s.x, rp.y - s.y) < s.r + R.stats.radius) {
           R.damage(14 * tick, rp.x, rp.y, 'fire');
-          if (Math.random() < 0.3) audio.sizzle();
+          if (grand() < 0.3) audio.sizzle();
           break;
         }
       }

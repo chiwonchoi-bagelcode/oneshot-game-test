@@ -212,6 +212,8 @@ function buildHouse(b: LevelBuilder) {
       const s = 1.05 - r * 0.1;
       b.block(49.2 + c * 1.1 + r * 0.55, FY + s / 2 + r * 1.05, s, s, 'cardboard', { hp: 6, coins: 2, obj: giftBox(s, giftCols[(r * 3 + c) % giftCols.length]) });
     }
+  // a fuel can right inside the party window: breaking in refuels you for the chaos
+  b.fuel(53.2, FY + 0.9);
   // fish tank on a cabinet
   b.slab(56, FY + 1.0, 3, 2.0, 'wood', { depth: 2.2 });
   b.waterTank(56, FY + 2.7, 2.6, 1.4, 45, { obj: fishTank(2.6, 1.4) });
@@ -236,13 +238,13 @@ function buildHouse(b: LevelBuilder) {
   const cakeT = b.target({ x: CX, y: FY + 3.05, w: 3.2, h: 2.1, model: P.cake(), hp: 70, mat: 'soft', density: 1.6, soakMax: 40, sound: 'cake' });
   cakeT.body!.getFixtureList()!.setFriction(0.12);
   // chandelier over the cake
-  const chand = b.block(77.6, 15.9, 2.2, 0.7, 'metal', { breakable: false, density: 7, obj: chandelier() });
-  b.hang(77.6, 18.0, chand, { color: '#c9a24a', cause: 'topple' });
+  const chand = b.block(79.7, 15.9, 2.2, 0.7, 'metal', { breakable: false, density: 7, obj: chandelier() });
+  b.hang(79.7, 18.0, chand, { color: '#c9a24a', cause: 'topple' });
   // sprinkler: pipe from the roof tank (background) to a glass valve over the cake (device)
-  const valve = b.block(79.7, 17.7, 0.8, 0.6, 'glass', { static: true, hp: 4, breakable: true, role: 'device', obj: valveModel(), name: 'sprinkler' });
+  const valve = b.block(77.9, 17.7, 0.8, 0.6, 'glass', { static: true, hp: 2, breakable: true, role: 'device', obj: valveModel(), name: 'sprinkler' });
   valve.onBreak = () => {
-    b.w.addEmitter({ x: 79.7, y: 17.2, dx: -0.15, dy: -1, rate: 26, speed: 5, time: 9, spread: 0.3 });
-    b.w.events.onText(79.7, 16.8, '쏴아아!', 'water');
+    b.w.addEmitter({ x: 77.9, y: 17.2, dx: 0, dy: -1, rate: 26, speed: 5, time: 9, spread: 0.25 });
+    b.w.events.onText(77.9, 16.8, '쏴아아!', 'water');
     audio.splash();
   };
   b.put(pipes(), 0, 0, -1.7);
@@ -480,9 +482,9 @@ function pipes() {
   const v = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, ROOF_Y - 17.7, 10), m);
   v.position.set(86.5, (ROOF_Y + 17.7) / 2, 0);
   g.add(v);
-  const h = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 86.5 - 79.7, 10), m);
+  const h = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 86.5 - 77.9, 10), m);
   h.rotation.z = Math.PI / 2;
-  h.position.set((86.5 + 79.7) / 2, 17.7, 0);
+  h.position.set((86.5 + 77.9) / 2, 17.7, 0);
   g.add(h);
   return g;
 }

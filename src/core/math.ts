@@ -59,3 +59,20 @@ export function mulberry32(seed: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+/**
+ * Gameplay RNG (C-039): everything that can change physics or outcomes draws from this seeded
+ * stream, re-seeded per attempt, so the same input replays the same chaos. Purely visual
+ * effects keep Math.random.
+ */
+let gameRng = mulberry32(1);
+export function seedGame(seed: number) {
+  gameRng = mulberry32(seed);
+}
+export const grand = (a = 0, b = 1) => a + gameRng() * (b - a);
+export const gchance = (p: number) => gameRng() < p;
+export function hashStr(s: string) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return h >>> 0;
+}

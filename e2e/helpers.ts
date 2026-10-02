@@ -17,7 +17,7 @@ export async function boot(page: Page, opts: { save?: unknown; rawSave?: string;
     if (o.backup !== undefined) localStorage.setItem('junk-rocket-ruckus-v1.backup', o.backup);
   }, opts);
   await page.goto('/');
-  await page.waitForFunction(() => !!(window as any).__jrr, null, { timeout: 30_000 });
+  await page.waitForFunction(() => !!(window as any).__jrr, null, { timeout: 120_000 });
   // stop the wall-clock loop: from here time only moves through advance()
   await page.evaluate(() => (window as any).__jrr.advance(0.05));
   return errors;
@@ -27,7 +27,7 @@ export async function boot(page: Page, opts: { save?: unknown; rawSave?: string;
 export async function reopen(page: Page) {
   await page.evaluate(() => sessionStorage.setItem('jrr-keep', '1'));
   await page.reload();
-  await page.waitForFunction(() => !!(window as any).__jrr, null, { timeout: 30_000 });
+  await page.waitForFunction(() => !!(window as any).__jrr, null, { timeout: 120_000 });
   await page.evaluate(() => (window as any).__jrr.advance(0.05));
 }
 

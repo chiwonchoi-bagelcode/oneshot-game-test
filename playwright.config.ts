@@ -14,16 +14,19 @@ export default defineConfig({
   retries: 0,
   reporter: [['list'], ['json', { outputFile: 'test-results/e2e.json' }]],
   use: {
-    baseURL: 'http://127.0.0.1:4174/',
+    baseURL: process.env.PW_URL ?? 'http://127.0.0.1:4174/',
     viewport: { width: 390, height: 780 },
     deviceScaleFactor: 1,
     hasTouch: true,
     launchOptions: { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] },
     screenshot: 'only-on-failure',
   },
-  webServer: {
-    command: 'npx vite preview --port 4174 --strictPort --host 127.0.0.1 --outDir dist-test',
-    url: 'http://127.0.0.1:4174/',
-    reuseExistingServer: !process.env.CI,
-  },
+  // PW_URL points the suite at an already running build (e.g. a second preview port)
+  webServer: process.env.PW_URL
+    ? undefined
+    : {
+        command: 'npx vite preview --port 4174 --strictPort --host 127.0.0.1 --outDir dist-test',
+        url: 'http://127.0.0.1:4174/',
+        reuseExistingServer: !process.env.CI,
+      },
 });

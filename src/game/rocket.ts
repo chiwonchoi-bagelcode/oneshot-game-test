@@ -4,7 +4,7 @@ import { CAT, Ent, GameWorld, RocketLike } from './world';
 import { FUEL_MASS, GRAVITY, Loadout, RocketStats, computeStats, partById } from '../data/parts';
 import { buildRocket, RocketModel } from '../render/models/rocket';
 import { flameGradient } from '../render/textures';
-import { clamp, damp, len, rand, wrapAngle } from '../core/math';
+import { clamp, damp, len, rand, grand, wrapAngle } from '../core/math';
 import { audio } from '../core/audio';
 
 const Vec2 = planck.Vec2;
@@ -39,6 +39,11 @@ export class Rocket implements RocketLike {
   private massT = 0;
   private sputter = 0;
   private idleT = 1;
+  /** time spent commanding thrust while wedged (C-038 anti-wedge) */
+  private stuckT = 0;
+  private safe = { x: 0, y: 0, a: 0 };
+  /** number of anti-wedge hops (diagnostics) */
+  unsticks = 0;
   /** set when the engine just kicked in (for FX) */
   kicked = 0;
   private lastDamageT = -9;
@@ -148,7 +153,7 @@ export class Rocket implements RocketLike {
     this.world.explode(p.x, p.y, 3.5 + this.stats.dryMass * 0.4, 30 + this.mass() * 8, 'boom');
     // scatter the junk parts
     for (let i = 0; i < 6; i++) {
-      this.world.spawnDebris(p.x + rand(-0.4, 0.4), p.y + rand(-0.5, 0.5), rand(0.2, 0.4), rand(0.2, 0.5), rand(0, 6), i % 2 ? 'metal' : 'cardboard', rand(-8, 8), rand(2, 12), 0.5);
+      this.world.spawnDebris(p.x + grand(-0.4, 0.4), p.y + grand(-0.5, 0.5), grand(0.2, 0.4), grand(0.2, 0.5), grand(0, 6), i % 2 ? 'metal' : 'cardboard', grand(-8, 8), grand(2, 12), 0.5);
     }
     this.world.removeEnt(this.ent);
     this.model.root.visible = false;
@@ -159,6 +164,19 @@ export class Rocket implements RocketLike {
   step(dt: number, input: ControlInput) {
     if (this.dead) return;
     const body = this.body;
+    // C-038: a non-finite state is never kept; fall back to the last good transform
+    const p0 = body.getPosition();
+    const v0 = body.getLinearVelocity();
+    if (!Number.isFinite(p0.x + p0.y + v0.x + v0.y + body.getAngle())) {
+      body.setTransform(Vec2(this.safe.x, this.safe.y), this.safe.a);
+      body.setLinearVelocity(Vec2(0, 0));
+      body.setAngularVelocity(0);
+      console.warn('[rocket] non-finite state recovered');
+    } else {
+      this.safe.x = p0.x;
+      this.safe.y = p0.y;
+      this.safe.a = body.getAngle();
+    }
     const st = this.stats;
     const v = body.getLinearVelocity();
     const speed = len(v.x, v.y);
@@ -190,7 +208,7 @@ export class Rocket implements RocketLike {
     }
     const hasFuel = this.fuel > 0 || this.boosting > 0;
     if (!hasFuel) {
-      if (want > 0 && Math.random() < 0.2) this.sputter = 0.15;
+      if (want > 0 && grand() < 0.2) this.sputter = 0.15;
       want = 0;
       if (!this.outOfFuelWarned) {
         this.outOfFuelWarned = true;
@@ -234,6 +252,25 @@ export class Rocket implements RocketLike {
       this.sputter -= dt;
       this.throttle *= 0.5;
     }
+
+    // ---- anti-wedge (C-038): lying against a floor and a crate, the nose can be unable to turn
+    // toward the stick and misaligned thrust is too weak to push off. If the player keeps asking
+    // and nothing moves, give a small hop toward the stick so control is never lost.
+    if (want > 0 && hasFuel && this.boosting <= 0) {
+      const tA = Math.atan2(-dx, dy);
+      const err = Math.abs(wrapAngle(tA - ang));
+      // misaligned and unable to turn: react fast; aligned but pressed into something: give it longer
+      if (speed < 0.45 && Math.abs(body.getAngularVelocity()) < 0.4 && this.throttle > 0.6) this.stuckT += err > 0.55 ? dt : dt * 0.45;
+      else this.stuckT = Math.max(0, this.stuckT - dt * 2);
+      if (this.stuckT > 0.35) {
+        this.stuckT = 0;
+        this.unsticks++;
+        const m = body.getMass();
+        const l = len(dx, dy) || 1;
+        body.applyLinearImpulse(Vec2((dx / l) * m * 2.6, (dy / l) * m * 2.6 + m * 1.2), body.getWorldCenter(), true);
+        body.setAngularVelocity(clamp(wrapAngle(tA - ang) * 3, -st.turn, st.turn));
+      }
+    } else this.stuckT = 0;
 
     // ---- thrust along the facing (not the stick!)
     if (this.throttle > 0.001) {

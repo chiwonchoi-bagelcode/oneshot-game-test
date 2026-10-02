@@ -8,7 +8,7 @@ import { feltMat, plastic, woodMat, emissive, texMat, metalMat, stripeMat, shiny
 import { roundedBox } from '../render/geom';
 import { signTexture } from '../render/textures';
 import { audio } from '../core/audio';
-import { rand } from '../core/math';
+import { rand, grand } from '../core/math';
 
 const Vec2 = planck.Vec2;
 
@@ -188,7 +188,7 @@ export const stage3: StageDef = {
     b.animated.push((dt) => {
       honk -= dt;
       if (blimp.alive && honk <= 0) {
-        honk = 6 + rand(0, 3);
+        honk = 6 + grand(0, 3);
         const p = blimpBody.getPosition();
         b.w.events.onText(p.x - 2, p.y + 3, '♪ 시장님 최고~ 투표 2번~ ♪', 'warn');
       }
@@ -225,7 +225,7 @@ export const stage3: StageDef = {
       b.w.fx.explosion(p.x, p.y, 2.2);
       b.w.fx.confettiBurst(p.x, p.y, 120, 18);
       audio.explosion(2);
-      for (let i = 0; i < 10; i++) b.w.spawnDebris(p.x + rand(-4, 4), p.y + rand(-1.5, 1.5), rand(0.6, 1.6), rand(0.4, 1), rand(0, 6), i % 2 ? 'fabric' : 'rubber', rand(-10, 10), rand(-4, 10), 0.4);
+      for (let i = 0; i < 10; i++) b.w.spawnDebris(p.x + grand(-4, 4), p.y + grand(-1.5, 1.5), grand(0.6, 1.6), grand(0.4, 1), grand(0, 6), i % 2 ? 'fabric' : 'rubber', grand(-10, 10), grand(-4, 10), 0.4);
       b.w.events.onShake(1);
     };
     b.animated.push(() => {

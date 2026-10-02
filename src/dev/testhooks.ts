@@ -23,6 +23,8 @@ interface PilotOpts {
   stopAt?: number;
   /** extra upward bias in the velocity controller (gravity compensation) */
   lift?: number;
+  /** fuel-saving flying like a person: fall freely toward lower targets, wider dead band */
+  eco?: boolean;
 }
 
 export function installTestHooks(app: App) {
@@ -146,10 +148,15 @@ export function installTestHooks(app: App) {
       minD = Math.min(minD, d);
       if (o.stopAt && d < o.stopAt) break;
       const sp = o.ram ? speed : Math.min(speed, d * 1.2);
-      const dvx = (dx / d) * sp - v.x;
-      const dvy = (dy / d) * sp - v.y + lift;
+      let dvx = (dx / d) * sp - v.x;
+      let dvy = (dy / d) * sp - v.y + lift;
+      if (o.eco && dy < -1.5 && !o.ram) {
+        // target below: let gravity do the work, only brake when falling faster than wanted
+        dvy = Math.min(0, (dy / d) * sp - v.y) < 0 ? 0 : (dy / d) * sp - v.y + lift;
+        if (v.y < (dy / d) * sp - 1.5) dvy = (dy / d) * sp - v.y + lift;
+      }
       const l = Math.hypot(dvx, dvy) || 1;
-      const want = l > 0.8 || o.ram;
+      const want = l > (o.eco ? 2.2 : 0.8) || o.ram;
       if (want) {
         if (!fingerDown) {
           down(ax, ay);

@@ -10,7 +10,7 @@ import * as P from '../render/models/props';
 import { FlightInput } from '../core/input';
 import { audio } from '../core/audio';
 import { Loadout } from '../data/parts';
-import { clamp, damp, easeInOutCubic, len, lerp, rand } from '../core/math';
+import { clamp, damp, easeInOutCubic, len, lerp, rand, seedGame, hashStr } from '../core/math';
 import { save, persist, stageProg } from '../core/save';
 import { track } from '../core/telemetry';
 import { disposeTree } from '../render/geom';
@@ -179,6 +179,8 @@ export class Flight {
       },
     };
     this.world = new GameWorld(levelGroup, this.fx, events);
+    // C-039: one seed per (stage, attempt) — same input replays the same chaos
+    seedGame((hashStr(stage.id) ^ Math.imul(save.attempts + 1, 2654435761)) >>> 0);
     this.builder = new LevelBuilder(this.world, levelGroup);
     stage.build(this.builder);
     this.builder.finalize(stage.fog[0]);
