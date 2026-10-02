@@ -66,7 +66,19 @@ export class Renderer {
     }
   }
 
+  /** draw calls / triangles of the last full frame (all passes), for the perf budget (Q-PF) */
+  frameStats = { calls: 0, triangles: 0 };
+
   render(scene: THREE.Scene, camera: THREE.Camera) {
+    const info = this.renderer.info;
+    info.autoReset = false;
+    info.reset();
+    this.renderMain(scene, camera);
+    this.frameStats.calls = info.render.calls;
+    this.frameStats.triangles = info.render.triangles;
+  }
+
+  private renderMain(scene: THREE.Scene, camera: THREE.Camera) {
     if (this.composer && this.renderPass) {
       this.renderPass.scene = scene;
       this.renderPass.camera = camera;

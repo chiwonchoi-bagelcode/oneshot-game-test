@@ -8,7 +8,10 @@ import { audio } from '../core/audio';
 import { clamp, distPointSeg, len, rand, grand, wrapAngle } from '../core/math';
 import { disposeTree } from '../render/geom';
 import { windAccel } from './wind';
-import { ContactRole, contactOutline, setCracks, terrainOutline, animateContact } from '../render/contact';
+import { BUDGET } from './budgets';
+import { getMaterial } from '../render/materials';
+import { roundedBox } from '../render/geom';
+import { ContactRole, contactOutline, terrainOutline, animateContact, OutlineBatch, CrackBatch, outlineTemplate } from '../render/contact';
 import { shiny } from '../render/materials';
 
 const Vec2 = planck.Vec2;
@@ -62,6 +65,9 @@ export interface Ent {
   /** Q-CI role override (e.g. 'device' for valves/fireworks); default from breakable */
   role?: ContactRole;
   crackLv?: number;
+  /** batched outline template + role (render bookkeeping, not gameplay data) */
+  otpl?: ReturnType<typeof outlineTemplate>;
+  orole?: ContactRole;
   /** cause hint inherited from a chain reaction (explosion, device, water, fire) */
   hint?: Cause;
   hintT?: number;
@@ -180,6 +186,15 @@ export class GameWorld {
   private water: Ent[] = [];
   private waterMesh: THREE.InstancedMesh;
   private debris: Ent[] = [];
+  /** Q-PF-06: loose debris is drawn with one instanced mesh per material, not one mesh each */
+  private debrisMeshes = new Map<string, THREE.InstancedMesh>();
+  /** Q-PF-04: plain blocks (default model) are instanced per material */
+  private blockMeshes = new Map<string, THREE.InstancedMesh>();
+  private instEnts: Ent[] = [];
+  /** Q-CI outlines of everything not baked, one draw call per role */
+  private outlineBatches: Record<ContactRole, OutlineBatch> = { solid: new OutlineBatch('solid'), breakable: new OutlineBatch('breakable'), device: new OutlineBatch('device') };
+  private outlined: Ent[] = [];
+  private cracks!: CrackBatch;
   private coinMesh: THREE.InstancedMesh;
   private coinCount = 0;
   time = 0;
@@ -209,6 +224,8 @@ export class GameWorld {
     this.waterMesh.count = 0;
     this.waterMesh.frustumCulled = false;
     this.waterMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    for (const b of Object.values(this.outlineBatches)) scene.add(b.mesh);
+    this.cracks = new CrackBatch(scene);
     scene.add(this.waterMesh);
     this.coinMesh = new THREE.InstancedMesh(bottleCapGeometry(), new THREE.MeshStandardMaterial({ color: '#f2cf4a', roughness: 0.3, metalness: 0.35, emissive: '#5a4010', emissiveIntensity: 0.6 }), 600);
     this.coinMesh.count = 0;
@@ -220,6 +237,18 @@ export class GameWorld {
 
   /** Drop everything that could still call back into a finished run (timers, hooks). */
   dispose() {
+    for (const b of Object.values(this.outlineBatches)) {
+      this.scene.remove(b.mesh);
+      b.dispose();
+    }
+    this.cracks.dispose();
+    for (const m of [...this.debrisMeshes.values(), ...this.blockMeshes.values()]) {
+      this.scene.remove(m);
+      m.geometry.dispose();
+      m.dispose();
+    }
+    this.debrisMeshes.clear();
+    this.blockMeshes.clear();
     this.timers.length = 0;
     this.stepHooks.length = 0;
     this.actions.length = 0;
@@ -250,13 +279,20 @@ export class GameWorld {
 
   /** Q-CI: everything the rocket can hit carries an outline drawn exactly on its collider. */
   private attachContact(e: Ent) {
-    if (!e.obj || !e.body) return;
+    if (!e.body) return;
     if (e.kind === 'debris' || e.kind === 'water' || e.kind === 'rocket' || e.kind === 'terrain') return;
     const f = e.body.getFixtureList();
     if (!f || f.isSensor()) return;
-    if (e.obj.getObjectByName('contact')) return;
+    if (e.obj?.getObjectByName('contact')) return;
     const role: ContactRole = e.role ?? (e.breakable ? 'breakable' : 'solid');
-    e.obj.add(contactOutline({ w: e.w, h: e.h, round: e.round }, role, e.depth / 2 + 0.03));
+    // static unbreakable blocks are merged into the baked scenery: their outline is baked with them
+    if (e.obj && e.isStatic && !e.breakable && e.kind === 'block') {
+      e.obj.add(contactOutline({ w: e.w, h: e.h, round: e.round }, role, e.depth / 2 + 0.03));
+      return;
+    }
+    e.otpl = outlineTemplate({ w: e.w, h: e.h, round: e.round }, role);
+    e.orole = role;
+    if (!this.outlined.includes(e)) this.outlined.push(e);
   }
 
   /** Change an entity's role after creation (builder helpers mark devices). */
@@ -264,7 +300,10 @@ export class GameWorld {
     e.role = role;
     const old = e.obj?.getObjectByName('contact');
     if (old) old.parent!.remove(old);
-    this.attachContact(e);
+    if (e.otpl) {
+      e.otpl = outlineTemplate({ w: e.w, h: e.h, round: e.round }, role);
+      e.orole = role;
+    } else this.attachContact(e);
   }
 
   /** Static terrain polygon (any shape) as a chain loop. */
@@ -321,7 +360,12 @@ export class GameWorld {
     });
     body.setUserData(e);
     e.body = body;
-    e.obj = o.obj === undefined ? blockMesh(o.w, o.h, e.depth, o.mat) : o.obj;
+    if (o.obj === undefined) {
+      // plain block: drawn by the per-material instanced mesh (Q-PF-04)
+      e.obj = null;
+      this.blockMesh(o.mat);
+      this.instEnts.push(e);
+    } else e.obj = o.obj;
     if (e.obj) {
       e.obj.position.set(o.x, o.y, 0);
       e.obj.rotation.z = o.angle ?? 0;
@@ -460,7 +504,7 @@ export class GameWorld {
 
   // ================================================================== water
   spawnWater(x: number, y: number, vx: number, vy: number) {
-    if (this.water.length >= 240) {
+    if (this.water.length >= BUDGET.water) {
       const old = this.water.shift()!;
       this.removeEnt(old);
     }
@@ -475,7 +519,9 @@ export class GameWorld {
       friction: 0.0,
       restitution: 0.05,
       filterCategoryBits: CAT.WATER,
-      filterMaskBits: CAT.STATIC | CAT.DYN | CAT.WATER | CAT.DEBRIS,
+      // Q-PF-05: droplets don't collide with each other (the costliest pairs); they still pool on
+      // floors, push props, soak targets and put out fires
+      filterMaskBits: CAT.STATIC | CAT.DYN | CAT.DEBRIS,
     });
     body.setUserData(e);
     e.body = body;
@@ -550,7 +596,7 @@ export class GameWorld {
       rb.setLinearVelocity(Vec2(vr.x - nx * absorbed, vr.y - ny * absorbed));
       const dmg = other.hp * matInfo(other.mat).hardness * (noseHit ? st.frontArmor : 1) * 0.3 / st.armor;
       const p = wm.points[0] ?? rb.getPosition();
-      this.queueBreak(other, 'ram', vr.x * 0.6, vr.y * 0.6, p.x, p.y);
+      this.queueBreak(other, this.rocketCause(other), vr.x * 0.6, vr.y * 0.6, p.x, p.y);
       this.actions.push(() => {
         this.rocket?.damage(dmg, p.x, p.y, 'smash', { mat: other.mat, speed: vn });
         const big = other.maxHp > 40;
@@ -593,6 +639,20 @@ export class GameWorld {
     if (age < 4) return true;
     // the chain stays attached while the body is still moving because of it
     return !!e.body && e.body.isAwake() && age < 30;
+  }
+
+  /**
+   * A rocket contact is a ram only when the rocket brought the energy. A parked rocket that a
+   * falling target lands on does not steal the credit from the chain that dropped it.
+   */
+  private rocketCause(other: Ent): Cause {
+    const R = this.rocket;
+    if (!R || !other.body) return 'ram';
+    const rv = R.ent.body!.getLinearVelocity();
+    const ov = other.body.getLinearVelocity();
+    const rs = len(rv.x, rv.y);
+    if (rs < 2.5 && len(ov.x, ov.y) > rs) return this.hintAlive(other) ? other.hint! : 'topple';
+    return 'ram';
   }
 
   private causeFrom(other: Ent, self?: Ent): Cause {
@@ -699,7 +759,7 @@ export class GameWorld {
       const JJ = J * punch;
       if (JJ >= thr) {
         other.hp -= JJ;
-        if (other.hp <= 0) this.queueBreak(other, 'ram', 0, 0, p.x, p.y);
+        if (other.hp <= 0) this.queueBreak(other, this.rocketCause(other), 0, 0, p.x, p.y);
       }
     }
     if (other.onHit) other.onHit(J, R.ent);
@@ -861,7 +921,7 @@ export class GameWorld {
   }
 
   spawnDebris(x: number, y: number, w: number, h: number, ang: number, mat: string, vx: number, vy: number, depth = 1) {
-    if (this.debris.length > 140) {
+    if (this.debris.length >= BUDGET.debris) {
       const old = this.debris.shift()!;
       this.removeEnt(old);
     }
@@ -886,11 +946,128 @@ export class GameWorld {
     });
     body.setUserData(e);
     e.body = body;
-    e.obj = blockMesh(w, h, depth * grand(0.6, 1), mat);
-    e.obj.position.set(x, y, grand(-0.3, 0.3));
+    e.obj = null;
+    e.data = { dd: depth * grand(0.6, 1), dz: grand(-0.3, 0.3) };
+    e.px = x;
+    e.py = y;
+    e.pa = ang;
+    this.debrisMesh(mat);
     this.debris.push(e);
-    this.register(e);
+    this.ents.push(e);
     return e;
+  }
+
+  private blockMesh(mat: string, need = 0) {
+    let m = this.blockMeshes.get(mat);
+    const want = Math.max(64, need);
+    if (!m || m.instanceMatrix.count < want) {
+      const cap = Math.max(want, (m?.instanceMatrix.count ?? 32) * 2);
+      if (m) {
+        this.scene.remove(m);
+        m.geometry.dispose();
+        m.dispose();
+      }
+      const geo = roundedBox(1, 1, 1, 0.08, mat === 'glass' ? 1 : 0.5, 2).clone();
+      geo.userData = {};
+      m = new THREE.InstancedMesh(geo, getMaterial(mat), cap);
+      m.count = 0;
+      m.frustumCulled = false;
+      m.castShadow = mat !== 'glass';
+      m.receiveShadow = true;
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.scene.add(m);
+      this.blockMeshes.set(mat, m);
+    }
+    return m;
+  }
+
+  private debrisMesh(mat: string) {
+    let m = this.debrisMeshes.get(mat);
+    if (!m) {
+      const geo = roundedBox(1, 1, 1, 0.12, mat === 'glass' ? 1 : 0.5, 2).clone();
+      geo.userData = {};
+      m = new THREE.InstancedMesh(geo, getMaterial(mat), BUDGET.debris);
+      m.count = 0;
+      m.frustumCulled = false;
+      m.castShadow = mat !== 'glass';
+      m.receiveShadow = true;
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.scene.add(m);
+      this.debrisMeshes.set(mat, m);
+    }
+    return m;
+  }
+
+  /** interpolated transform of a body for drawing */
+  private lerpT(e: Ent, alpha: number) {
+    const b = e.body!;
+    if (e.isStatic) {
+      const p = b.getPosition();
+      return [p.x, p.y, b.getAngle()] as const;
+    }
+    const p = b.getPosition();
+    const a = b.getAngle();
+    return [e.px + (p.x - e.px) * alpha, e.py + (p.y - e.py) * alpha, e.pa + wrapAngle(a - e.pa) * alpha] as const;
+  }
+
+  /** instanced blocks, batched outlines and crack decals (Q-PF-04, Q-CI) */
+  private syncBatches(alpha: number) {
+    // instanced plain blocks
+    if (this.instEnts.some((e) => !e.alive)) this.instEnts = this.instEnts.filter((e) => e.alive);
+    const per = new Map<string, Ent[]>();
+    for (const e of this.instEnts) {
+      let l = per.get(e.mat);
+      if (!l) per.set(e.mat, (l = []));
+      l.push(e);
+    }
+    const m4 = new THREE.Matrix4();
+    for (const [mat, mesh0] of this.blockMeshes) {
+      const list = per.get(mat) ?? [];
+      const mesh = this.blockMesh(mat, list.length);
+      void mesh0;
+      let n = 0;
+      for (const e of list) {
+        if (!e.body) continue;
+        const [x, y, a] = this.lerpT(e, alpha);
+        m4.makeRotationZ(a);
+        m4.scale(tmpV3.set(e.w, e.h, e.depth));
+        m4.setPosition(x, y, 0);
+        mesh.setMatrixAt(n++, m4);
+      }
+      mesh.count = n;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+    // outlines
+    if (this.outlined.some((e) => !e.alive)) this.outlined = this.outlined.filter((e) => e.alive);
+    for (const b of Object.values(this.outlineBatches)) b.begin();
+    let breakables = 0;
+    for (const e of this.outlined) {
+      if (!e.body) continue;
+      const [x, y, a] = this.lerpT(e, alpha);
+      if (!e.otpl || !e.orole) continue;
+      this.outlineBatches[e.orole].add(e.otpl, x, y, a, e.depth / 2 + 0.03);
+      if (e.breakable) breakables++;
+    }
+    for (const b of Object.values(this.outlineBatches)) b.end();
+    // damage states: cracks appear as a breakable loses hp (Q-CI-02)
+    this.cracks.begin(breakables + 8);
+    for (const e of this.outlined) {
+      if (!e.body || !e.breakable || e.round || e.maxHp >= 9999) continue;
+      const r = e.hp / e.maxHp;
+      const lv = r < 0.34 ? 2 : r < 0.7 ? 1 : 0;
+      e.crackLv = lv;
+      if (!lv) continue;
+      const [x, y, a] = this.lerpT(e, alpha);
+      this.cracks.add(lv as 1 | 2, x, y, a, e.w, e.h, e.depth / 2 + 0.03);
+    }
+    this.cracks.end();
+  }
+
+  /** counts for the perf overlay / stress test (Q-PF-03) */
+  perfCounts() {
+    let awake = 0;
+    for (let b = this.pw.getBodyList(); b; b = b.getNext()) if (b.isDynamic() && b.isAwake()) awake++;
+    return { bodies: this.pw.getBodyCount(), awake, debris: this.debris.length, water: this.water.length, ents: this.ents.length };
   }
 
   removeEnt(e: Ent) {
@@ -977,7 +1154,8 @@ export class GameWorld {
       if (b.isDynamic()) this.propagateHint([b], cause);
       if (e.breakable) {
         e.hp -= power * 2 * fall;
-        if (e.hp <= 0) this.queueBreak(e, cause, nx * 6, ny * 6, x, y);
+        // the chain that already set it in motion keeps the credit (R-06 first-chain rule)
+        if (e.hp <= 0) this.queueBreak(e, this.hintAlive(e) && e.body?.isAwake() ? e.hint! : cause, nx * 6, ny * 6, x, y);
       }
       if (e.flammable) e.heat += fall * 0.8;
     }
@@ -1359,16 +1537,8 @@ export class GameWorld {
   // ================================================================== visuals
   syncVisuals(alpha: number, dtFrame: number) {
     animateContact(this.time);
+    this.syncBatches(alpha);
     for (const e of this.ents) {
-      // damage states: cracks appear as a breakable loses hp (Q-CI-02)
-      if (e.breakable && e.obj && e.alive && !e.round && e.maxHp < 9999) {
-        const r = e.hp / e.maxHp;
-        const lv = r < 0.34 ? 2 : r < 0.7 ? 1 : 0;
-        if (lv !== (e.crackLv ?? 0)) {
-          e.crackLv = lv;
-          setCracks(e.obj, e.w, e.h, e.depth / 2 + 0.03, lv as 0 | 1 | 2);
-        }
-      }
       if (!e.body || !e.obj || e.isStatic) continue;
       const p = e.body.getPosition();
       const a = e.body.getAngle();
@@ -1376,6 +1546,26 @@ export class GameWorld {
       e.obj.position.y = e.py + (p.y - e.py) * alpha;
       e.obj.rotation.z = e.pa + wrapAngle(a - e.pa) * alpha;
     }
+    // debris instances (Q-PF-06)
+    const dm = new THREE.Matrix4();
+    for (const mesh of this.debrisMeshes.values()) mesh.count = 0;
+    for (const e of this.debris) {
+      if (!e.body) continue;
+      const mesh = this.debrisMeshes.get(e.mat);
+      if (!mesh || mesh.count >= BUDGET.debris) continue;
+      const p = e.body.getPosition();
+      const a = e.body.getAngle();
+      const x = e.px + (p.x - e.px) * alpha;
+      const y = e.py + (p.y - e.py) * alpha;
+      const rz = e.pa + wrapAngle(a - e.pa) * alpha;
+      const left = (e.maxLife ?? 1) - (e.life ?? 0);
+      const f = left < 0.6 ? Math.max(0.01, left / 0.6) : 1;
+      dm.makeRotationZ(rz);
+      dm.scale(tmpV3.set(e.w * f, e.h * f, (e.data?.dd ?? 1) * f));
+      dm.setPosition(x, y, e.data?.dz ?? 0);
+      mesh.setMatrixAt(mesh.count++, dm);
+    }
+    for (const mesh of this.debrisMeshes.values()) mesh.instanceMatrix.needsUpdate = true;
     // water instances
     const m = new THREE.Matrix4();
     let n = 0;

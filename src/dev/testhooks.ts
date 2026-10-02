@@ -13,6 +13,8 @@ import type { App } from '../app';
 import { save, loadStatus, loadProblems } from '../core/save';
 import { events } from '../core/telemetry';
 import { computeStats } from '../data/parts';
+import { PerfMeter, installPerfOverlay } from './perf';
+import { stressStage } from './stress';
 
 interface PilotOpts {
   /** max approach speed (m/s) */
@@ -25,6 +27,8 @@ interface PilotOpts {
   lift?: number;
   /** fuel-saving flying like a person: fall freely toward lower targets, wider dead band */
   eco?: boolean;
+  /** render + perf-sample every frame (Q-PF measurement) instead of physics-only steps */
+  render?: boolean;
 }
 
 export function installTestHooks(app: App) {
@@ -170,7 +174,8 @@ export function installTestHooks(app: App) {
         up();
         fingerDown = false;
       }
-      step(1);
+      if (o.render) frame(6); // software GL in CI: draw 1 frame in 6, time the update every frame
+      else step(1);
     }
     if (fingerDown) up();
     app.tick(0.0001, true);
@@ -241,5 +246,22 @@ export function installTestHooks(app: App) {
     return null;
   };
 
-  (window as any).__jrr = { app, advance, step, tap, down, move, up, press, launch, pilot, coast, state, where, events };
+  // perf meter (always sampling in test builds; overlay with ?perf)
+  const meter = new PerfMeter(app);
+  if (/[?&]perf\b/.test(location.search)) installPerfOverlay(app, meter);
+  /** one deterministic frame for measurement: fixed 60 Hz update + render, sampled like the browser loop */
+  let frameN = 0;
+  const frame = (renderEvery = 1) => {
+    const t0 = performance.now();
+    app.tick(1 / 60, frameN++ % renderEvery === 0);
+    meter.sample(performance.now() - t0);
+  };
+  const perf = { meter, frame, report: () => meter.report(), reset: () => meter.reset(), counts: () => meter.counts() };
+  /** start the Q-PF stress stage (test builds only) */
+  const stress = () => {
+    app.startFlight('stress', true, stressStage);
+    advance(0.05);
+  };
+
+  (window as any).__jrr = { app, advance, step, tap, down, move, up, press, launch, pilot, coast, state, where, events, perf, stress };
 }

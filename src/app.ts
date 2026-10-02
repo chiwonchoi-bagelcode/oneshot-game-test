@@ -7,7 +7,10 @@ import { track } from './core/telemetry';
 import { Flight } from './game/flight';
 import { Garage } from './game/garage';
 import { STAGES } from './data/stages';
+import type { StageDef } from './game/level';
 import { partById, flightCheck, computeStats, autoFixLoadout } from './data/parts';
+import { Particles } from './render/effects';
+import { BUDGET } from './game/budgets';
 
 type Mode = 'title' | 'stages' | 'garage' | 'flight';
 
@@ -40,6 +43,7 @@ export class App {
     initSave({ stages: STAGES.map((s) => s.id), gears: STAGES.flatMap((s) => s.gearIds) });
     const canvas = container.querySelector('canvas')!;
     this.renderer = new Renderer(canvas, save.settings.quality);
+    this.applyBudgets();
     this.input = new FlightInput(container.querySelector('#touch') as HTMLElement);
     this.input.setSensitivity(save.settings.sensitivity);
     this.ui = new UI(container.querySelector('#ui') as HTMLElement, {
@@ -145,6 +149,7 @@ export class App {
     if (k === 'sfxVol' || k === 'musicVol') audio.setVolumes(S.sfxVol, S.musicVol);
     if (k === 'quality') {
       this.renderer.setQuality(S.quality);
+      this.applyBudgets();
       this.lowFpsStrikes = 0;
       this.onResize();
     }
@@ -186,14 +191,14 @@ export class App {
     return false;
   }
 
-  startFlight(id: string, retry = false) {
+  startFlight(id: string, retry = false, def?: StageDef) {
     if (!flightCheck(computeStats(save.equip)).ok) {
       if (this.mode === 'flight') this.setMode('garage');
       this.checkBuild();
       return;
     }
     this.stageId = id;
-    const st = STAGES.find((s) => s.id === id)!;
+    const st = def ?? STAGES.find((s) => s.id === id)!;
     if (this.flight) {
       this.flight.dispose();
       this.flight = null;
@@ -270,15 +275,34 @@ export class App {
   /** Optional per-frame observer (perf overlay in dev builds). */
   onFrame?: (dt: number) => void;
 
+  /** Q-PF-08: low quality cuts decoration budgets first (never colliders or chain reactions) */
+  private applyBudgets() {
+    Particles.budget = this.renderer.quality === 'low' ? Math.round(BUDGET.particles / 2) : BUDGET.particles;
+  }
+
+  /** last frame's CPU timings (ms) for the dev perf overlay */
+  timing = { update: 0, render: 0 };
+
   tick(dt: number, render: boolean) {
+    const t0 = performance.now();
     if (this.mode === 'flight' && this.flight) {
       if (!this.paused) this.flight.update(dt);
       const r = this.flight.rocket;
       audio.setEngine(this.paused || r.dead ? 0 : r.throttle, r.stats.exhaust === 'foam' ? 'cola' : r.stats.exhaust === 'torch' ? 'spray' : 'extinguisher', r.dead ? 0 : r.speed());
-      if (render) this.flight.render();
+      const t1 = performance.now();
+      this.timing.update = t1 - t0;
+      if (render) {
+        this.flight.render();
+        this.timing.render = performance.now() - t1;
+      }
     } else {
       this.garage.update(dt);
-      if (render) this.garage.render();
+      const t1 = performance.now();
+      this.timing.update = t1 - t0;
+      if (render) {
+        this.garage.render();
+        this.timing.render = performance.now() - t1;
+      }
     }
   }
 
@@ -296,6 +320,7 @@ export class App {
       if (this.lowFpsStrikes >= 2) {
         this.renderer.setQuality('low');
         save.settings.quality = 'low';
+        this.applyBudgets();
         persist();
         this.onResize();
         this.ui.toast('기기가 힘들어해서 저사양 그래픽으로 바꿨어요 (설정에서 변경)');

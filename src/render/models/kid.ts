@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { feltMat, knitMat, plastic, shiny, stripeMat } from '../materials';
-import { roundedBox } from '../geom';
+import { roundedBox, mergeRig } from '../geom';
 import { damp } from '../../core/math';
 
 export type KidAnim = 'idle' | 'run' | 'crouch' | 'jump' | 'tuck' | 'stomp' | 'cheer' | 'sad' | 'remote' | 'wave' | 'worried' | 'build';
@@ -279,6 +279,10 @@ export class Kid {
       this.scarf.push(seg);
       parent = seg;
     }
+
+    // Q-PF: merge each joint's meshes per material (mouths stay swappable)
+    for (const m of Object.values(this.mouths)) m.userData.keep = true;
+    mergeRig(this.root);
 
     // tiny details don't need to cast shadows (saves draw calls)
     this.root.traverse((o) => {

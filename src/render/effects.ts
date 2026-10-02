@@ -35,6 +35,15 @@ const tmpS = new THREE.Vector3();
 const tmpC = new THREE.Color();
 
 export class Particles {
+  /** live pools (a disposed Effects removes its pools) — Q-PF-03 global budget */
+  static live = new Set<Particles>();
+  /** global cap; low quality halves it (decoration is cut before anything that matters) */
+  static budget = 1600;
+  static alive() {
+    let n = 0;
+    for (const p of Particles.live) n += p.ps.length;
+    return n;
+  }
   mesh: THREE.InstancedMesh;
   ps: P[] = [];
   private pool: P[] = [];
@@ -45,6 +54,7 @@ export class Particles {
     this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
+    Particles.live.add(this);
     if (kind !== 'additive') {
       this.mesh.castShadow = kind === 'solid';
       this.mesh.receiveShadow = true;
@@ -52,7 +62,9 @@ export class Particles {
   }
 
   spawn(o: SpawnOpts) {
-    if (this.ps.length >= this.cap) {
+    const over = this.ps.length >= this.cap || Particles.alive() >= Particles.budget;
+    if (over) {
+      if (!this.ps.length) return;
       // recycle oldest
       const old = this.ps.shift()!;
       this.pool.push(old);
@@ -145,6 +157,16 @@ interface Ring {
 
 /** All transient visual effects in one place. */
 export class Effects {
+  /** release this owner's pools from the global particle budget (flight disposal) */
+  dispose() {
+    for (const p of [this.flames, this.smoke, this.sparks, this.chips, this.confetti, this.drops]) {
+      p.clear();
+      Particles.live.delete(p);
+    }
+  }
+  particleCount() {
+    return this.flames.ps.length + this.smoke.ps.length + this.sparks.ps.length + this.chips.ps.length + this.confetti.ps.length + this.drops.ps.length;
+  }
   group = new THREE.Group();
   flames: Particles;
   smoke: Particles;
@@ -218,6 +240,12 @@ export class Effects {
   }
 
   ring(x: number, y: number, r0: number, r1: number, life: number, color: THREE.ColorRepresentation = 0xffffff, flat = false) {
+    // Q-PF: each ring is a draw call — at most 8 at once, the oldest makes way
+    if (this.rings.length >= 8) {
+      const old = this.rings.shift()!;
+      old.m.visible = false;
+      this.ringPool.push(old.m);
+    }
     let m = this.ringPool.pop();
     if (!m) {
       m = new THREE.Mesh(new THREE.TorusGeometry(1, 0.06, 6, 40), this.ringMat.clone());

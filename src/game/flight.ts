@@ -313,7 +313,7 @@ export class Flight {
   private onBreak(e: Ent, cause: Cause) {
     if (e.kind === 'debris' || e.kind === 'water') return;
     if (this.world.ledgerOpen) this.mischief += e.isTarget ? 0 : Math.max(2, Math.round(e.maxHp / 10));
-    const p = e.obj ? e.obj.position : new THREE.Vector3();
+    const p = e.obj ? e.obj.position : new THREE.Vector3(e.px, e.py, 0);
     const s = this.toScreen(p.x, p.y);
     const words: Record<string, string[]> = {
       glass: ['와장창!', '쨍그랑!'],
@@ -1011,19 +1011,48 @@ export class Flight {
     k.setFace(this.kid.face);
     const sh = this.pShake > 0 ? (Math.random() - 0.5) * this.pShake * 0.08 : 0;
     k.root.position.x = sh;
+    // Q-PF: the ~50-part portrait kid is drawn into a small texture at 20 Hz and composited with
+    // one quad every frame, instead of re-drawing the whole model each frame
+    const px = Math.max(16, Math.round(rect.s * Math.min(2, (window.devicePixelRatio || 1))));
+    if (!this.pRT || this.pRT.width !== px) {
+      this.pRT?.dispose();
+      this.pRT = new THREE.WebGLRenderTarget(px, px, { samples: 0 });
+      this.pQuadMat.map = this.pRT.texture;
+      this.pQuadMat.needsUpdate = true;
+      this.pFrame = 0;
+    }
+    if (this.pFrame++ % 3 === 0) {
+      const prevClear = r.getClearAlpha();
+      r.setRenderTarget(this.pRT);
+      r.setClearAlpha(0);
+      r.clear(true, true, false);
+      r.render(this.pScene, this.pCam);
+      r.setRenderTarget(null);
+      r.setClearAlpha(prevClear);
+    }
     r.setScissorTest(true);
     r.setViewport(rect.x, H - rect.y - rect.s, rect.s, rect.s);
     r.setScissor(rect.x, H - rect.y - rect.s, rect.s, rect.s);
     r.autoClear = false;
-    r.clearDepth();
-    r.render(this.pScene, this.pCam);
+    r.render(this.pQuadScene, this.pQuadCam);
+    this.renderer.frameStats.calls = r.info.render.calls;
+    this.renderer.frameStats.triangles = r.info.render.triangles;
     r.autoClear = true;
     r.setScissorTest(false);
     r.setViewport(0, 0, this.renderer.w, H);
   }
 
+  private pRT: THREE.WebGLRenderTarget | null = null;
+  private pFrame = 0;
+  private pQuadMat = new THREE.MeshBasicMaterial({ transparent: true, depthTest: false, depthWrite: false });
+  private pQuadScene = new THREE.Scene().add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.pQuadMat));
+  private pQuadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
   /** Release everything this run owns (R-07). Shared caches are left alone. */
   dispose() {
+    this.fx.dispose();
+    this.pRT?.dispose();
+    this.pQuadMat.dispose();
     this.ui.showHud(false);
     this.ui.setTarget(null);
     this.ui.showJoystick(null);

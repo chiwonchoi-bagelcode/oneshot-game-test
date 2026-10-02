@@ -176,3 +176,64 @@ export function gearShape(teeth: number, rOuter: number, rInner: number, hole = 
   }
   return s;
 }
+
+/**
+ * Q-PF-04: collapse a prop model's sub-meshes into one mesh per material (in the root's local
+ * space), so a 40-part cake costs a handful of draw calls. Parts under a node flagged
+ * `userData.keep` (animated pieces) and outline meshes are left alone.
+ */
+export function mergeByMaterial(root: THREE.Object3D, minParts = 3) {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const buckets = new Map<string, { mat: THREE.Material; cast: boolean; geos: THREE.BufferGeometry[] }>();
+  const victims: THREE.Mesh[] = [];
+  const visit = (o: THREE.Object3D) => {
+    if (o !== root && o.userData.keep) return;
+    const m = o as THREE.Mesh;
+    if (o !== root && m.isMesh && !(m as any).isInstancedMesh && !Array.isArray(m.material) && m.visible && m.name !== 'contact') {
+      const key = m.material.uuid + (m.castShadow ? '|c' : '|n');
+      let b = buckets.get(key);
+      if (!b) buckets.set(key, (b = { mat: m.material, cast: m.castShadow, geos: [] }));
+      const g = m.geometry.clone();
+      g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
+      b.geos.push(g);
+      victims.push(m);
+    }
+    for (const c of o.children) visit(c);
+  };
+  visit(root);
+  if (victims.length < minParts) return 0;
+  for (const v of victims) {
+    v.parent?.remove(v);
+    if (!v.geometry.userData.shared) v.geometry.dispose();
+  }
+  let n = 0;
+  for (const b of buckets.values()) {
+    const merged = b.geos.length === 1 ? b.geos[0] : merge(b.geos);
+    if (!merged) continue;
+    const mesh = new THREE.Mesh(merged, b.mat);
+    mesh.castShadow = b.cast;
+    mesh.receiveShadow = true;
+    root.add(mesh);
+    n++;
+  }
+  return victims.length - n;
+}
+
+/**
+ * Merge a rigged model without breaking its animation: inside every group, the meshes that
+ * hang directly off it are merged per material; groups (joints) and parts flagged `keep`
+ * (e.g. swappable mouths) stay separate.
+ */
+export function mergeRig(root: THREE.Object3D) {
+  const groups: THREE.Object3D[] = [];
+  root.traverse((o) => {
+    if (!(o as THREE.Mesh).isMesh && !o.userData.keep) groups.push(o);
+  });
+  for (const g of groups) {
+    const sub = g.children.filter((c) => !(c as THREE.Mesh).isMesh && !c.userData.keep);
+    for (const c of sub) c.userData.keep = true;
+    mergeByMaterial(g, 2);
+    for (const c of sub) delete c.userData.keep;
+  }
+}

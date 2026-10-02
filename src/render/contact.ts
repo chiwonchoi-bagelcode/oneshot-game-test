@@ -226,3 +226,133 @@ export function hazed(mat: THREE.Material, fog: THREE.Color, k: number) {
   out = m;
   return out;
 }
+
+// ------------------------------------------------------------------ batching (Q-PF-04)
+/** Local-space stroke template for a collider shape (shared, cached). */
+export function outlineTemplate(shape: { w: number; h: number; round?: boolean }, role: ContactRole) {
+  const dashed = role !== 'solid';
+  const g = shape.round ? circleGeometry(shape.w / 2, dashed) : rectGeometry(shape.w, shape.h, dashed);
+  return { pos: g.attributes.position.array as Float32Array, idx: g.index!.array as ArrayLike<number> };
+}
+
+/**
+ * All outlines of one role in one draw call. Rebuilt each frame from the bodies' transforms,
+ * so dozens of tumbling props cost one draw call instead of one each.
+ */
+export class OutlineBatch {
+  mesh: THREE.Mesh;
+  private pos = new Float32Array(0);
+  private idx = new Uint32Array(0);
+  private v = 0;
+  private i = 0;
+  private geo = new THREE.BufferGeometry();
+  constructor(role: ContactRole) {
+    this.mesh = new THREE.Mesh(this.geo, mats[role]);
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 2;
+    this.mesh.name = 'contactBatch';
+    this.grow(4096, 6144);
+  }
+  private grow(vCap: number, iCap: number) {
+    const p = new Float32Array(vCap * 3);
+    p.set(this.pos.subarray(0, this.v * 3));
+    const ix = new Uint32Array(iCap);
+    ix.set(this.idx.subarray(0, this.i));
+    this.pos = p;
+    this.idx = ix;
+    const pa = new THREE.BufferAttribute(this.pos, 3);
+    pa.setUsage(THREE.DynamicDrawUsage);
+    this.geo.setAttribute('position', pa);
+    const ia = new THREE.BufferAttribute(this.idx, 1);
+    ia.setUsage(THREE.DynamicDrawUsage);
+    this.geo.setIndex(ia);
+  }
+  begin() {
+    this.v = 0;
+    this.i = 0;
+  }
+  add(t: { pos: Float32Array; idx: ArrayLike<number> }, x: number, y: number, ang: number, z: number) {
+    const nv = t.pos.length / 3;
+    if (this.v + nv > this.pos.length / 3 || this.i + t.idx.length > this.idx.length) this.grow(Math.max(this.pos.length / 3 * 2, this.v + nv), Math.max(this.idx.length * 2, this.i + t.idx.length));
+    const c = Math.cos(ang);
+    const s = Math.sin(ang);
+    const P = this.pos;
+    let o = this.v * 3;
+    for (let k = 0; k < t.pos.length; k += 3) {
+      const lx = t.pos[k];
+      const ly = t.pos[k + 1];
+      P[o++] = x + lx * c - ly * s;
+      P[o++] = y + lx * s + ly * c;
+      P[o++] = z;
+    }
+    const base = this.v;
+    for (let k = 0; k < t.idx.length; k++) this.idx[this.i++] = t.idx[k] + base;
+    this.v += nv;
+  }
+  end() {
+    this.geo.setDrawRange(0, this.i);
+    (this.geo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    this.geo.index!.needsUpdate = true;
+    this.mesh.visible = this.i > 0;
+  }
+  dispose() {
+    this.geo.dispose();
+  }
+}
+
+/** Crack decals of every damaged block, two instanced quads (one per damage level). */
+export class CrackBatch {
+  meshes: THREE.InstancedMesh[] = [];
+  private cap = 0;
+  private group: THREE.Group;
+  constructor(group: THREE.Group) {
+    this.group = group;
+    this.ensure(64);
+  }
+  private ensure(n: number) {
+    if (n <= this.cap) return;
+    const cap = Math.max(n, this.cap * 2, 64);
+    for (const m of this.meshes) {
+      this.group.remove(m);
+      m.dispose();
+    }
+    if (!crackMats.length) setCracks(new THREE.Object3D(), 1, 1, 0, 1);
+    this.meshes = crackMats.map((mat) => {
+      const m = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), mat, cap);
+      m.count = 0;
+      m.frustumCulled = false;
+      m.renderOrder = 1;
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.group.add(m);
+      return m;
+    });
+    this.cap = cap;
+  }
+  private n = [0, 0];
+  private tm = new THREE.Matrix4();
+  private tv = new THREE.Vector3();
+  begin(total: number) {
+    this.ensure(total);
+    this.n[0] = this.n[1] = 0;
+  }
+  add(level: 1 | 2, x: number, y: number, ang: number, w: number, h: number, z: number) {
+    const m = this.meshes[level - 1];
+    this.tm.makeRotationZ(ang);
+    this.tm.scale(this.tv.set(Math.min(w, h * 2) * 0.95, Math.min(h, w * 2) * 0.95, 1));
+    this.tm.setPosition(x, y, z + 0.005);
+    m.setMatrixAt(this.n[level - 1]++, this.tm);
+  }
+  end() {
+    this.meshes.forEach((m, i) => {
+      m.count = this.n[i];
+      m.instanceMatrix.needsUpdate = true;
+    });
+  }
+  dispose() {
+    for (const m of this.meshes) {
+      this.group.remove(m);
+      m.geometry.dispose();
+      m.dispose();
+    }
+  }
+}

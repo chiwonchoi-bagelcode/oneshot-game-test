@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { LevelBuilder, StageDef } from '../game/level';
 import * as P from '../render/models/props';
 import { feltMat, plastic, woodMat, emissive, texMat, metalMat, stripeMat } from '../render/materials';
-import { roundedBox, extrudeShape } from '../render/geom';
+import { roundedBox, extrudeShape, mergeByMaterial } from '../render/geom';
 import { signTexture } from '../render/textures';
 import { audio } from '../core/audio';
 
@@ -276,6 +276,14 @@ function buildHouse(b: LevelBuilder) {
   for (const f of fam) {
     b.put(f.g.root, f.x, FY, -2.1);
     f.g.root.userData.noHaze = true;
+    f.g.root.userData.dynamic = true; // animated (arms/head): never baked into scenery
+    // background characters: no shadows, each moving part merged to a few draw calls (Q-PF)
+    for (const part of [f.g.head, f.g.armL, f.g.armR]) {
+      part.userData.keep = true;
+      mergeByMaterial(part, 2);
+    }
+    mergeByMaterial(f.g.root, 2);
+    f.g.root.traverse((o) => ((o as THREE.Mesh).isMesh ? (o.castShadow = false) : 0));
   }
   let alarmed = -1;
   let cheered = false;

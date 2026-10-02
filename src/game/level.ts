@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Cause, Ent, GameWorld, Rope } from './world';
-import { bakeStatic, boxUV, extrudePoly, roundedBox } from '../render/geom';
+import { bakeStatic, boxUV, extrudePoly, roundedBox, mergeByMaterial } from '../render/geom';
 import { hazed } from '../render/contact';
 
 /** deco placed at or behind this z is background (Q-CI); between this and +PLAY_Z it would sit in the play plane */
@@ -92,6 +92,14 @@ export class LevelBuilder {
         m.castShadow = false;
       });
     }
+    // Q-PF-04: every prop model becomes one mesh per material (after stage code tweaked parts)
+    for (const e of this.w.ents) if (e.obj && e.kind !== 'rocket' && !e.obj.userData.noMerge) mergeByMaterial(e.obj);
+    // Q-PF-08: small props don't cast shadows (contact readability comes from the outline)
+    for (const e of this.w.ents) {
+      if (!e.obj || e.isTarget || e.kind === 'rocket' || e.w * e.h >= 2.5) continue;
+      e.obj.traverse((o) => ((o as THREE.Mesh).isMesh ? (o.castShadow = false) : 0));
+    }
+    for (const p of this.w.pickups) if (p.obj) mergeByMaterial(p.obj);
     const roots: THREE.Object3D[] = [this.deco];
     for (const e of this.w.ents) {
       if (e.obj && e.isStatic && !e.breakable && (e.kind === 'terrain' || e.kind === 'block')) {
@@ -166,7 +174,10 @@ export class LevelBuilder {
     }
     // structure (floors, walls, counters) never catches fire unless a stage asks for it:
     // a burning 30 m floor would become one giant heat source
-    const e = this.w.addBox({ x, y, w, h, angle: o.angle, mat, static: true, depth, obj: g, breakable: o.breakable ?? false, hp: o.hp, name: o.name, flammable: o.flammable ?? (o.breakable ? undefined : false) });
+    // breakable slabs (windows, hatches, thin walls) are drawn by the instanced block batch (Q-PF-04);
+    // unbreakable ones are baked into the static scenery
+    const inst = !!o.breakable && !o.top;
+    const e = this.w.addBox({ x, y, w, h, angle: o.angle, mat, static: true, depth, obj: inst ? undefined : g, breakable: o.breakable ?? false, hp: o.hp, name: o.name, flammable: o.flammable ?? (o.breakable ? undefined : false) });
     if (o.name) this.named.set(o.name, e);
     return e;
   }
@@ -319,6 +330,8 @@ export class LevelBuilder {
 
   fan(x: number, y: number, ang: number, power = 22, length = 14, size = 2.6) {
     const { group, blades } = P.fan(size);
+    blades.userData.keep = true;
+    mergeByMaterial(group);
     // The fan's face normal is local +z. Tilt it so it mostly blows along local +y
     // (the wind direction) while still showing its face to the camera.
     group.rotation.set(-(Math.PI / 2 - 0.75), 0, 0);
@@ -447,6 +460,7 @@ export class LevelBuilder {
    * or the way out. Never a collider.
    */
   cutaway(obj: THREE.Object3D, zone: { minX: number; maxX: number; minY: number; maxY: number }, near = 3, far = 13) {
+    mergeByMaterial(obj);
     obj.userData.dynamic = true;
     obj.userData.noHaze = true;
     const mats = new Map<THREE.Material, THREE.Material>();
@@ -531,6 +545,7 @@ export class LevelBuilder {
   clouds(minX: number, maxX: number, minY: number, maxY: number, n: number, zMin = -40, zMax = -18) {
     for (let i = 0; i < n; i++) {
       const c = P.cloud(Math.floor(this.rnd() * 9999), 1 + this.rnd() * 1.6);
+      mergeByMaterial(c);
       c.position.set(minX + this.rnd() * (maxX - minX), minY + this.rnd() * (maxY - minY), zMin + this.rnd() * (zMax - zMin));
       c.userData.dynamic = true;
       this.deco.add(c);
