@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { CAT, Ent, GameWorld, RocketLike } from './world';
 import { FUEL_MASS, GRAVITY, Loadout, RocketStats, computeStats, partById } from '../data/parts';
 import { buildRocket, RocketModel } from '../render/models/rocket';
+import { flameGradient } from '../render/textures';
 import { clamp, damp, len, rand, wrapAngle } from '../core/math';
 import { audio } from '../core/audio';
 
@@ -73,12 +74,13 @@ export class Rocket implements RocketLike {
     world.rocket = this;
 
     // flame visuals attached to nozzle
-    const glowMat = new THREE.MeshBasicMaterial({ color: this.flameColor(), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    const grad = flameGradient();
+    const glowMat = new THREE.MeshBasicMaterial({ color: this.flameColor(), map: grad, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
     this.flameCone = new THREE.Mesh(new THREE.ConeGeometry(0.22, 1, 14, 1, true), glowMat);
     this.flameCone.rotation.x = Math.PI; // point down
     this.flameCone.position.y = -0.5;
     this.model.flame.add(this.flameCone);
-    const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0xfff4d0, map: grad, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
     this.flameCore = new THREE.Mesh(new THREE.ConeGeometry(0.1, 1, 10, 1, true), coreMat);
     this.flameCore.rotation.x = Math.PI;
     this.flameCore.position.y = -0.3;

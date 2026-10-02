@@ -619,6 +619,24 @@ export function glowSprite(): THREE.Texture {
   }).map;
 }
 
+/** Vertical gradient for flame cones: hot at the nozzle, fading to the tip. */
+export function flameGradient(): THREE.Texture {
+  return cached('flamegrad', () => {
+    const c = canvas(8, 128);
+    const ctx = c.getContext('2d')!;
+    const g = ctx.createLinearGradient(0, 0, 0, 128);
+    g.addColorStop(0, 'rgba(255,255,255,0)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.35)');
+    g.addColorStop(0.85, 'rgba(255,255,255,0.95)');
+    g.addColorStop(1, 'rgba(255,255,255,1)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 8, 128);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return { map: t };
+  }).map;
+}
+
 /** Text drawn on a canvas, for signs. */
 export function signTexture(text: string, bg: string, fg: string, w = 512, h = 256): THREE.Texture {
   return label('sign' + text + bg + fg, (ctx) => {

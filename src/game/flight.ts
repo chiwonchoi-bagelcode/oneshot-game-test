@@ -679,9 +679,9 @@ export class Flight {
       const look = 0.3;
       c.tx = p.x + clamp(v.x * look, -4.5, 4.5);
       c.ty = p.y + clamp(v.y * look, -5.5, 5.5) + 1.0;
-      const widthWanted = 12 + clamp(sp - 5, 0, 22) * 0.24;
-      c.vh = clamp(widthWanted / Math.max(0.3, aspect), 19, 40);
-      if (this.phase === 'boost') c.vh = Math.max(c.vh, 24);
+      const widthWanted = 10.5 + clamp(sp - 6, 0, 24) * 0.16;
+      c.vh = clamp(widthWanted / Math.max(0.3, aspect), 17, 30);
+      if (this.phase === 'boost') c.vh = Math.max(c.vh, 22);
     } else if (this.phase === 'success') {
       const k = clamp(this.phaseT / 0.6, 0, 1);
       const p = r.dead ? new THREE.Vector3(this.targetPos.x, this.targetPos.y, 0) : r.model.root.position;
