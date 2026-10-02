@@ -52,6 +52,9 @@ export class UI {
   private resultEl!: HTMLElement;
   private pauseEl!: HTMLElement;
   private bannerTimer = 0;
+  private portraitEl!: HTMLElement;
+  private sayEl!: HTMLElement;
+  private sayTimer = 0;
   private current: Screen = 'none';
   stagesList: StageDef[] = [];
   garageSlot: Slot = 'body';
@@ -126,7 +129,7 @@ export class UI {
   private buildStages() {
     const s = el('div', 'screen stages');
     s.innerHTML = `
-      <div class="topbar"><button class="iconbtn" data-a="back">${ICON.back}</button><div class="tb-title">어디로 날아갈까?</div><div class="wallet"></div></div>
+      <div class="topbar"><button class="iconbtn" data-a="back">${ICON.back}</button><div class="tb-title">장난 고르기</div><div class="wallet"></div></div>
       <div class="stage-list"></div>
       <div class="bottombar"><button class="btn blue" data-a="garage">🔧 차고에서 개조하기</button></div>
     `;
@@ -332,6 +335,8 @@ export class UI {
         </div>
       </div>
       <div class="alt-t">${ICON.alt}<b>0</b>m</div>
+      <div class="portrait"><div class="pt-ring"></div></div>
+      <div class="say"></div>
       <div class="target-mark"><div class="tm-arrow"></div><div class="tm-label"><span class="tm-ico">${ICON.target}</span><b class="tm-d">0</b>m</div></div>
       <div class="banner"><div class="bn-t"></div><div class="bn-s"></div></div>
       <div class="prompt"></div>
@@ -357,6 +362,8 @@ export class UI {
     this.joyHint = s.querySelector('.joy-hint')!;
     this.ringEl = s.querySelector('.timing-ring')!;
     this.hurtEl = s.querySelector('.hurt')!;
+    this.portraitEl = s.querySelector('.portrait')!;
+    this.sayEl = s.querySelector('.say')!;
     s.querySelector('.pause-b')!.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
       this.h.click();
@@ -364,6 +371,29 @@ export class UI {
     });
     this.screens.flight = s;
     this.root.appendChild(s);
+  }
+
+  /** Where the live kid portrait should be drawn (CSS px, top-left origin). */
+  portraitRect(): { x: number; y: number; s: number } | null {
+    if (this.current !== 'flight') return null;
+    const r = this.portraitEl.getBoundingClientRect();
+    const root = this.root.getBoundingClientRect();
+    if (r.width < 4) return null;
+    const inset = 4;
+    return { x: Math.round(r.left - root.left + inset), y: Math.round(r.top - root.top + inset), s: Math.round(r.width - inset * 2) };
+  }
+
+  kidSay(text: string) {
+    const s = this.sayEl;
+    s.textContent = text;
+    s.classList.remove('on');
+    void s.offsetWidth;
+    s.classList.add('on');
+    clearTimeout(this.sayTimer);
+    this.sayTimer = window.setTimeout(() => s.classList.remove('on'), 1700);
+    this.portraitEl.classList.remove('talk');
+    void this.portraitEl.offsetWidth;
+    this.portraitEl.classList.add('talk');
   }
 
   showHud(on: boolean) {

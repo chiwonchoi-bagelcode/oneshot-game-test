@@ -81,6 +81,18 @@ export class Flight {
   private boundsWarnT = 0;
   private controlHinted = false;
   private kidMood = 0;
+  // HUD portrait: a second little kid rendered live in a corner viewport
+  private pScene = new THREE.Scene();
+  private pCam = new THREE.PerspectiveCamera(26, 1, 0.1, 10);
+  private pKid = new Kid();
+  private pShake = 0;
+  private sayCd = 0;
+  private lastSay = '';
+  private warnedFuel = false;
+  private warnedHull = false;
+  private saidNear = false;
+  private coinStreak = 0;
+  private coinStreakT = 0;
   private lastHullPct = 1;
   private introFrom = { x: 0, y: 0 };
 
@@ -101,6 +113,9 @@ export class Flight {
       onTarget: (e, c) => this.onTarget(e, c),
       onCoin: (v, x, y) => {
         this.runCoins += v;
+        this.coinStreak++;
+        this.coinStreakT = 1.2;
+        if (this.coinStreak === 5) this.say('짤랑짤랑~ 부자다!', 'grin');
         this.ui.popWorld(this.toScreen(x, y), `+${v}`, 'coin');
       },
       onGear: (id, x, y) => this.onGear(id, x, y),
@@ -120,6 +135,7 @@ export class Flight {
     this.world = new GameWorld(levelGroup, this.fx, events);
     this.builder = new LevelBuilder(this.world, levelGroup);
     stage.build(this.builder);
+    this.builder.finalize();
     this.world.bounds = stage.bounds;
     const T = this.world.targetEnt!;
     const tp = T.body!.getPosition();
@@ -141,7 +157,29 @@ export class Flight {
     this.kid.root.position.set(L.x + 5.6, L.y + 4.3, 0);
     this.kid.hips.rotation.y = -0.9;
     sc.add(this.kid.root);
-    this.kid.root.traverse((o) => ((o as THREE.Mesh).isMesh ? (o.castShadow = true) : 0));
+
+    // --- HUD portrait scene
+    // a disc backdrop (instead of a square background) keeps the portrait round
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshBasicMaterial({ color: '#ffe3a8', toneMapped: false }));
+    this.pScene.add(disc);
+    this.pScene.add(new THREE.HemisphereLight(0xffffff, 0x8a6a50, 1.6));
+    const pl = new THREE.DirectionalLight(0xffffff, 2.2);
+    pl.position.set(1, 2, 3);
+    this.pScene.add(pl);
+    this.pScene.environment = renderer.envTex;
+    this.pScene.environmentIntensity = 0.4;
+    this.pScene.add(this.pKid.root);
+    this.pKid.play('remote');
+    this.pKid.remote.visible = false;
+    this.pCam.position.set(0, 1.12, 1.75);
+    this.pCam.lookAt(0, 1.06, 0);
+    {
+      const dir = new THREE.Vector3(0, -0.06, -1.75).normalize();
+      const dist = 2.9;
+      disc.position.copy(this.pCam.position).addScaledVector(dir, dist);
+      disc.lookAt(this.pCam.position);
+      disc.scale.setScalar(dist * Math.tan(THREE.MathUtils.degToRad(13)) * 1.02);
+    }
 
     // --- rocket on the board
     this.rocket = new Rocket(this.world, loadout, L.x - 2, L.y + 3, 0);
@@ -150,7 +188,7 @@ export class Flight {
     this.rocket.onDeath = () => this.onRocketDeath();
     this.rocket.onEmpty = () => {
       this.ui.banner('연료 바닥!', '관성으로 날아가자…', 'warn');
-      this.kid.setFace('worried');
+      this.say('어어어…?!', 'worried', true);
     };
     this.placeRocketOnBoard();
 
@@ -220,6 +258,7 @@ export class Flight {
       metal: ['쾅!!', '찌그덕!'],
       ceramic: ['쨍!', '와장창!'],
     };
+    if (!e.isTarget && cause === 'ram' && Math.random() < 0.25) this.say(['히히, 와장창~', '뚫었다!', '이 정도쯤이야!'][Math.floor(Math.random() * 3)], 'grin');
     if (!e.isTarget && e.kind !== 'balloon' && e.kind !== 'fireworks' && Math.random() < 0.7) {
       const w = words[e.mat] ?? ['쾅!'];
       this.ui.popWorld(s, w[Math.floor(Math.random() * w.length)], 'smash');
@@ -243,6 +282,8 @@ export class Flight {
     this.ui.banner('장난 대성공!', m ? `${m.icon} ${m.name}` : GENERIC_METHOD[cause] ?? '', 'win');
     this.kid.play('cheer');
     this.kid.setFace('grin');
+    this.pKid.play('cheer');
+    this.say('해냈다아아!!', 'grin', true);
     this.setPhase('success');
   }
 
@@ -253,6 +294,7 @@ export class Flight {
     }
     this.gearsGot.push(id);
     this.ui.banner('톱니바퀴 발견!', '차고에서 새 부품을 연구할 수 있어요', 'gear');
+    this.say('보물이다!!', 'grin', true);
     this.ui.popWorld(this.toScreen(x, y), '⚙️', 'gear');
   }
 
@@ -260,14 +302,17 @@ export class Flight {
     if (a > 6) {
       this.kid.setFace('o');
       this.kidMood = 1.2;
+      this.pShake = Math.min(1.5, this.pShake + a / 20);
+      if (a > 14) this.say(kind === 'boom' ? '으아아 뜨거!' : kind === 'fire' ? '앗 뜨거!' : ['으악!', '아야야!', '쿵! 괜찮아…?'][Math.floor(Math.random() * 3)]);
     }
-    void kind;
   }
 
   private onRocketDeath() {
     if (this.phase === 'success' || this.phase === 'done') return;
     this.endReason = '로켓 대파!';
     this.ui.banner('로켓 대파!', '다른 길이나 부품을 시험해보자', 'lose');
+    this.say('내 로켓이…!', 'worried', true);
+    this.pKid.play('sad');
     this.kid.play('sad');
     this.kid.setFace('worried');
     audio.sad();
@@ -323,6 +368,7 @@ export class Flight {
       if (!this.controlHinted) {
         this.controlHinted = true;
         this.ui.banner('조종 시작!', '끌어당긴 방향으로 연료 분사 → 반대로 가속', 'info');
+        setTimeout(() => this.say('내 실력을 보여주지!', 'determined'), 1500);
       }
     }
 
@@ -368,6 +414,12 @@ export class Flight {
       if (this.kidMood <= 0 && this.phase === 'fly') this.kid.setFace('determined');
     }
     this.kid.update(rawDt, 0.5);
+    this.pKid.update(rawDt, 0.4);
+    this.pShake = Math.max(0, this.pShake - rawDt * 3);
+    this.sayCd -= rawDt;
+    this.coinStreakT -= rawDt;
+    if (this.coinStreakT <= 0) this.coinStreak = 0;
+    this.chatter();
 
     // flight bookkeeping
     if (this.phase === 'fly' || this.phase === 'boost') this.flightChecks(rawDt);
@@ -377,6 +429,30 @@ export class Flight {
     this.updateCamera(rawDt, false);
     this.updateHud();
     inp.endFrame();
+  }
+
+  private chatter() {
+    const r = this.rocket;
+    if (this.phase !== 'fly' || r.dead) return;
+    const fuelPct = r.fuel / r.stats.fuel;
+    const hullPct = r.hull / r.stats.hull;
+    if (!this.warnedFuel && fuelPct < 0.25 && fuelPct > 0) {
+      this.warnedFuel = true;
+      this.say('연료가 얼마 없어…!', 'worried', true);
+    }
+    if (!this.warnedHull && hullPct < 0.3) {
+      this.warnedHull = true;
+      this.say('조금만 버텨줘!', 'worried', true);
+    }
+    const T = this.world.targetEnt;
+    if (!this.saidNear && T && T.alive && T.body) {
+      const tp = T.body.getPosition();
+      const p = r.body.getPosition();
+      if (len(tp.x - p.x, tp.y - p.y) < 14) {
+        this.saidNear = true;
+        this.say('저기다!! 간다!', 'determined', true);
+      }
+    }
   }
 
   private updateIntro(dt: number) {
@@ -490,6 +566,7 @@ export class Flight {
     this.ui.popWorld(this.toScreen(L.x + 2.1, L.y + 1.2), '쿵!', 'smash');
     this.ui.popWorld(this.toScreen(px, py), this.perfect ? '슈우우웅!!' : '발사!', 'launch');
     if (this.perfect) this.runCoins += 30;
+    this.say(this.perfect ? '완벽해! 간다아아!' : '간다아아아!', 'grin', true);
     this.ui.showJoyHint(true);
     setTimeout(() => this.ui.showJoyHint(false), 4200);
     setTimeout(() => {
@@ -676,8 +753,39 @@ export class Flight {
     else this.ui.showJoystick(null);
   }
 
+  /** Kid shouts something in the HUD bubble. */
+  private say(text: string, face?: import('../render/models/kid').Face, force = false) {
+    if (!force && (this.sayCd > 0 || text === this.lastSay)) return;
+    this.sayCd = 1.6;
+    this.lastSay = text;
+    this.ui.kidSay(text);
+    if (face) {
+      this.kid.setFace(face);
+      this.kidMood = 1.4;
+    }
+  }
+
   render() {
     this.renderer.render(this.scene, this.camera);
+    if (this.phase === 'intro' || this.phase === 'done') return;
+    // portrait in the HUD corner
+    const r = this.renderer.renderer;
+    const rect = this.ui.portraitRect();
+    if (!rect) return;
+    const H = this.renderer.h;
+    const k = this.pKid;
+    k.setFace(this.kid.face);
+    const sh = this.pShake > 0 ? (Math.random() - 0.5) * this.pShake * 0.08 : 0;
+    k.root.position.x = sh;
+    r.setScissorTest(true);
+    r.setViewport(rect.x, H - rect.y - rect.s, rect.s, rect.s);
+    r.setScissor(rect.x, H - rect.y - rect.s, rect.s, rect.s);
+    r.autoClear = false;
+    r.clearDepth();
+    r.render(this.pScene, this.pCam);
+    r.autoClear = true;
+    r.setScissorTest(false);
+    r.setViewport(0, 0, this.renderer.w, H);
   }
 
   dispose() {

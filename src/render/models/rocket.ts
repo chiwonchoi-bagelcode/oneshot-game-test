@@ -559,8 +559,10 @@ export function buildRocket(l: Loadout): RocketModel {
   root.add(flame);
 
   root.traverse((o) => {
-    if ((o as THREE.Mesh).isMesh) {
-      o.castShadow = true;
+    const m = o as THREE.Mesh;
+    if (m.isMesh) {
+      m.geometry.computeBoundingSphere();
+      m.castShadow = m.geometry.boundingSphere!.radius > 0.1;
     }
   });
   return {

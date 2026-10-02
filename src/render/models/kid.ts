@@ -280,8 +280,13 @@ export class Kid {
       parent = seg;
     }
 
+    // tiny details don't need to cast shadows (saves draw calls)
     this.root.traverse((o) => {
-      (o as any).userData.kid = true;
+      const m = o as THREE.Mesh;
+      if (m.isMesh) {
+        m.geometry.computeBoundingSphere();
+        if (m.geometry.boundingSphere!.radius < 0.09) m.castShadow = false;
+      }
     });
   }
 

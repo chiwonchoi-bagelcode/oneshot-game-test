@@ -98,6 +98,48 @@ export function merge(geos: THREE.BufferGeometry[]) {
   return mergeGeometries(prepared, false)!;
 }
 
+/**
+ * Merge every static mesh under `root` (skipping subtrees flagged userData.dynamic)
+ * into one mesh per material — slashes draw calls for big dioramas.
+ */
+export function bakeStatic(roots: THREE.Object3D[], out: THREE.Group) {
+  const buckets = new Map<string, { mat: THREE.Material; cast: boolean; geos: THREE.BufferGeometry[] }>();
+  const victims: THREE.Mesh[] = [];
+  for (const root of roots) {
+    root.updateMatrixWorld(true);
+    const visit = (o: THREE.Object3D) => {
+      if (o.userData.dynamic) return;
+      const m = o as THREE.Mesh;
+      if (m.isMesh && !(m as any).isInstancedMesh && !Array.isArray(m.material) && m.visible) {
+        const key = m.material.uuid + (m.castShadow ? '|c' : '|n');
+        let b = buckets.get(key);
+        if (!b) {
+          b = { mat: m.material, cast: m.castShadow, geos: [] };
+          buckets.set(key, b);
+        }
+        const g = m.geometry.clone();
+        g.applyMatrix4(m.matrixWorld);
+        b.geos.push(g);
+        victims.push(m);
+      }
+      for (const c of o.children) visit(c);
+    };
+    visit(root);
+  }
+  for (const v of victims) v.parent?.remove(v);
+  for (const b of buckets.values()) {
+    if (!b.geos.length) continue;
+    const merged = b.geos.length === 1 ? b.geos[0] : merge(b.geos);
+    if (!merged) continue;
+    const mesh = new THREE.Mesh(merged, b.mat);
+    mesh.castShadow = b.cast;
+    mesh.receiveShadow = true;
+    mesh.matrixAutoUpdate = false;
+    out.add(mesh);
+  }
+  return buckets.size;
+}
+
 /** Star / gear outline shape. */
 export function gearShape(teeth: number, rOuter: number, rInner: number, hole = 0) {
   const s = new THREE.Shape();

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Cause, Ent, GameWorld, Rope } from './world';
-import { extrudePoly, roundedBox } from '../render/geom';
+import { bakeStatic, boxUV, extrudePoly, roundedBox } from '../render/geom';
 import { feltMat, getMaterial, matInfo, plastic } from '../render/materials';
 import * as P from '../render/models/props';
 import { SkyColors } from '../render/renderer';
@@ -53,6 +53,19 @@ export class LevelBuilder {
 
   constructor(public w: GameWorld, public scene: THREE.Group) {
     scene.add(this.deco);
+  }
+
+  /** Merge static scenery & unbreakable static geometry to cut draw calls. */
+  finalize() {
+    const roots: THREE.Object3D[] = [this.deco];
+    for (const e of this.w.ents) {
+      if (e.obj && e.isStatic && !e.breakable && (e.kind === 'terrain' || e.kind === 'block')) {
+        roots.push(e.obj);
+      }
+    }
+    const baked = new THREE.Group();
+    bakeStatic(roots, baked);
+    this.scene.add(baked);
   }
 
   // ---------------------------------------------------------------- terrain
@@ -280,6 +293,7 @@ export class LevelBuilder {
     const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.2, 1.2, 8), plastic('#f2f2f2', 0.4));
     stand.position.y = -0.9;
     holder.add(stand);
+    holder.userData.dynamic = true;
     this.deco.add(holder);
     // static collider for the fan housing
     this.w.addBox({ x, y, w: size * 0.9, h: 0.6, angle: ang - Math.PI / 2, mat: 'metal', static: true, breakable: false, obj: null });
@@ -393,6 +407,20 @@ export class LevelBuilder {
   }
 
   backdropHills(minX: number, maxX: number, y: number, colors: string[], zs: number[]) {
+    // a felt field stretching from behind the play layer to the hills
+    const fieldGeo = new THREE.BoxGeometry(maxX - minX + 300, 0.4, Math.abs(zs[zs.length - 1]) + 20);
+    boxUV(fieldGeo, 0.08);
+    const field = new THREE.Mesh(fieldGeo, feltMat(colors[0]));
+    field.position.set((minX + maxX) / 2, y - 0.25, -3.3 - (Math.abs(zs[zs.length - 1]) + 20) / 2);
+    field.receiveShadow = true;
+    this.deco.add(field);
+    // scattered felt trees on the field for depth
+    for (let x = minX - 40; x < maxX + 40; x += 18 + this.rnd() * 22) {
+      const z = -26 - this.rnd() * (Math.abs(zs[0]) - 28);
+      const t = P.tree(Math.floor(this.rnd() * 999), 1 + this.rnd() * 0.8);
+      t.position.set(x, y, z);
+      this.deco.add(t);
+    }
     zs.forEach((z, i) => {
       const step = 70 + i * 40;
       for (let x = minX - 60; x < maxX + 60; x += step) {
@@ -407,6 +435,7 @@ export class LevelBuilder {
     for (let i = 0; i < n; i++) {
       const c = P.cloud(Math.floor(this.rnd() * 9999), 1 + this.rnd() * 1.6);
       c.position.set(minX + this.rnd() * (maxX - minX), minY + this.rnd() * (maxY - minY), zMin + this.rnd() * (zMax - zMin));
+      c.userData.dynamic = true;
       this.deco.add(c);
       const sp = 0.2 + this.rnd() * 0.4;
       const x0 = c.position.x;

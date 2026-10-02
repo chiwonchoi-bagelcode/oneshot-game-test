@@ -192,11 +192,10 @@ export class Garage {
     rug.receiveShadow = true;
     sc.add(rug);
 
-    this.kid.root.position.set(3.6, 0, 0.6);
+    this.kid.root.position.set(3.4, 0, 0.9);
     this.kid.hips.rotation.y = -0.5;
     this.kid.root.scale.setScalar(1.6);
     this.kid.play('idle');
-    this.kid.root.traverse((m) => ((m as THREE.Mesh).isMesh ? (m.castShadow = true) : 0));
     sc.add(this.kid.root);
   }
 
@@ -238,8 +237,8 @@ export class Garage {
       pos = new THREE.Vector3(-2, 6, 16);
       look = new THREE.Vector3(0, 4, -2);
     } else {
-      pos = new THREE.Vector3(Math.sin(this.t * 0.15) * 1.2, 4.2, 15.5 / Math.max(0.55, aspect * 1.6));
-      look = new THREE.Vector3(0.6, 4.4, -1);
+      pos = new THREE.Vector3(1.0 + Math.sin(this.t * 0.15) * 1.0, 4.4, 14 / Math.max(0.55, aspect * 1.6));
+      look = new THREE.Vector3(1.2, 4.6, -1);
     }
     this.camPos.x = damp(this.camPos.x, pos.x, 3, dt);
     this.camPos.y = damp(this.camPos.y, pos.y, 3, dt);

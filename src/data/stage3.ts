@@ -48,6 +48,7 @@ export const stage3: StageDef = {
     const omega = 0.22;
     const wheelVis = ferrisWheel(WR);
     wheelVis.position.set(WX, WY, -1.5);
+    wheelVis.userData.dynamic = true;
     b.deco.add(wheelVis);
     const legs = new THREE.Group();
     for (const s of [-1, 1]) {
@@ -82,6 +83,7 @@ export const stage3: StageDef = {
       gb.setUserData(ge);
       b.w.ents.push(ge);
       const obj = gondola(cols[i % cols.length]);
+      obj.userData.dynamic = true;
       b.deco.add(obj);
       gondolas.push({ body: gb, a0, obj });
     }
@@ -298,7 +300,7 @@ export const stage3: StageDef = {
     b.coinLine(100, 225, 110, 248, 5);
     // backdrop
     b.backdropHills(-200, 320, 0, ['#6fb84c', '#86c562', '#a3d27e'], [-70, -120, -180]);
-    for (let i = 0; i < 5; i++) b.put(circusTent(i), -110 + i * 55, 0, -30 - (i % 2) * 10, 1.2);
+    for (let i = 0; i < 6; i++) b.put(circusTent(i), -130 + i * 55, 0, -60 - (i % 2) * 18, 1.3);
     b.put(P.sun(), -60, 120, -170, 2.4);
   },
 };
@@ -473,10 +475,11 @@ function satellite() {
 function circusTent(i: number) {
   const g = new THREE.Group();
   const cols = [['#e8443a', '#ffffff'], ['#3a6fe8', '#ffd23f'], ['#3aa85a', '#ffffff']][i % 3];
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 6, 16), stripeMat([cols[0], cols[1], cols[0], cols[1]], true));
+  const st = Array.from({ length: 12 }, (_, k) => cols[k % 2]);
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 6, 24), stripeMat(st, true));
   body.position.y = 3;
   g.add(body);
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(7, 6, 16), stripeMat([cols[0], cols[1], cols[0], cols[1]], true));
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(7, 6, 24), stripeMat(st, true));
   roof.position.y = 9;
   g.add(roof);
   const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.8), plastic('#ffd23f', 0.6));
